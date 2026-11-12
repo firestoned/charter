@@ -232,7 +232,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "charter-api"
+name = "charter-iam"
 version = "0.1.0"
 dependencies = [
  "anyhow",

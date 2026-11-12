@@ -3,7 +3,7 @@
 *A charter is a grant of rights from an authority: platform admins grant an
 identity client, and the owning team operates within it.*
 
-`charter-api` is a small kube-rs controller that turns an `IAMClient` custom resource into an
+`charter-iam` is a small kube-rs controller that turns an `IAMClient` custom resource into an
 Entra ID app registration, its service principal, a rotated client secret, and
 the Dex config that fronts it. Part of the IAM-as-a-Service proposal.
 

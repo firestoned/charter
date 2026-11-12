@@ -5,5 +5,5 @@ COPY src ./src
 RUN cargo build --release --locked
 
 FROM gcr.io/distroless/cc-debian12:nonroot
-COPY --from=build /src/target/release/charter-api /charter-api
-ENTRYPOINT ["/charter-api"]
+COPY --from=build /src/target/release/charter-iam /charter-iam
+ENTRYPOINT ["/charter-iam"]

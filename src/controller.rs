@@ -35,7 +35,7 @@ use std::{
 };
 
 const FINALIZER: &str = "iam.rbc.example/entra-cleanup";
-const MANAGER: &str = "charter-api";
+const MANAGER: &str = "charter-iam";
 const ANN_KEY_ID: &str = "iam.rbc.example/key-id";
 const ANN_PREV_KEY_ID: &str = "iam.rbc.example/previous-key-id";
 const ANN_ROTATED_AT: &str = "iam.rbc.example/rotated-at";
@@ -67,7 +67,7 @@ pub async fn run(ctx: Arc<Ctx>) {
     Controller::new(clients, watcher::Config::default())
         .owns(
             secrets,
-            watcher::Config::default().labels("app.kubernetes.io/managed-by=charter-api"),
+            watcher::Config::default().labels("app.kubernetes.io/managed-by=charter-iam"),
         )
         .shutdown_on_signal()
         .run(reconcile, error_policy, ctx)
@@ -245,7 +245,7 @@ async fn apply(o: &IAMClient, ctx: &Ctx) -> Result<Action, Error> {
         "groupMembershipClaims": group_claims,
         "tags": ["charter", format!("k8s:{ns}/{name}"), format!("spec:{}", &subj.spec_hash[..16])],
         "notes": format!(
-            "Managed by charter-api from IAMClient {ns}/{name}. Change {}. Do not edit by hand: changes are reverted and audited.",
+            "Managed by charter-iam from IAMClient {ns}/{name}. Change {}. Do not edit by hand: changes are reverted and audited.",
             subj.change_ref.as_deref().unwrap_or("n/a")
         ),
     });

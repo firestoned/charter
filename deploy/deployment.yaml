@@ -1,25 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: charter-api
+  name: charter-iam
   namespace: charter-system
 spec:
   replicas: 1   # single writer; leader election is required before scaling out
   selector:
-    matchLabels: { app: charter-api }
+    matchLabels: { app: charter-iam }
   template:
     metadata:
       labels:
-        app: charter-api
+        app: charter-iam
         azure.workload.identity/use: "true"   # webhook injects AZURE_* env and the token file
     spec:
-      serviceAccountName: charter-api
+      serviceAccountName: charter-iam
       automountServiceAccountToken: true
       securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: controller
           # Pin by digest; admission (e.g. Kyverno/Connaisseur) should verify the cosign signature.
-          image: ghcr.io/example/charter-api@sha256:REPLACE_WITH_SIGNED_DIGEST
+          image: ghcr.io/example/charter-iam@sha256:REPLACE_WITH_SIGNED_DIGEST
           env:
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: NAME_PREFIX, value: "charter-" }

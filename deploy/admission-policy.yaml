@@ -32,7 +32,7 @@ spec:
   matchConditions:
     # The controller only manages its finalizer; status is a separate subresource.
     - name: not-controller
-      expression: "request.userInfo.username != 'system:serviceaccount:charter-system:charter-api'"
+      expression: "request.userInfo.username != 'system:serviceaccount:charter-system:charter-iam'"
   variables:
     - name: isAdmin
       expression: >-
@@ -101,7 +101,7 @@ spec:
         resources: ["iamclients"]
   matchConditions:
     - name: not-controller
-      expression: "request.userInfo.username != 'system:serviceaccount:charter-system:charter-api'"
+      expression: "request.userInfo.username != 'system:serviceaccount:charter-system:charter-iam'"
   mutations:
     - patchType: ApplyConfiguration
       applyConfiguration:

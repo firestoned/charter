@@ -75,7 +75,7 @@ pub struct Auditor {
 impl Auditor {
     pub fn new(client: kube::Client, actor: String) -> Self {
         let reporter = Reporter {
-            controller: "charter-api".into(),
+            controller: "charter-iam".into(),
             instance: std::env::var("POD_NAME").ok(),
         };
         Self {
