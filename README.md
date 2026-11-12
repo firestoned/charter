@@ -4,6 +4,10 @@ A small kube-rs controller that turns an `IAMClient` custom resource into an
 Entra ID app registration, its service principal, a rotated client secret, and
 the Dex config that fronts it. Part of the IAM-as-a-Service proposal.
 
+Built audit- and compliance-first for a tier 1 bank: nothing changes in Entra
+without a policy check and a verified approval, and every change is audited.
+See [docs/compliance.md](docs/compliance.md) for the control mapping.
+
 Status: scaffold. It compiles, unit tests pass, and the Graph calls follow the
 v1.0 API, but it has not run against a real tenant yet.
 
@@ -26,47 +30,47 @@ and the Graph module can be swapped for "write ASO objects" later.
 ## Design
 
 ```
-IAMClient (team namespace)
+IAMClient (team namespace, written only by GitOps)
    │ reconcile (finalizer: iam.rbc.example/entra-cleanup)
-   ├─ Graph: PATCH /applications(uniqueName='iamaas-<ns>-<name>')  Prefer: create-if-missing
-   ├─ Graph: ensure servicePrincipals(appId=...), add owners
-   ├─ Graph: addPassword when a third of the lifetime remains, then removePassword(old)
-   ├─ Secret <name>-entra: tenant-id, client-id, client-secret, issuer, dex-config.yaml
-   └─ status: appId, objectId, servicePrincipalId, secretKeyId, secretExpiresAt, Ready
+   ├─ 1. policy check     redirect domains, HTTPS, no wildcards, max secret lifetime, >=1 owner
+   ├─ 2. approval check   requested-by != approved-by, change-ref, approved-spec-hash == sha256(spec)
+   │     (either failing: Ready=False, audit "denied", no Entra change)
+   ├─ 3. read Entra state; create, or record drift and correct it
+   ├─ 4. service principal; owners = spec.owners + controller (extras removed)
+   ├─ 5. client secret: new at 1/3 lifetime left, deliver, then revoke stale and unknown secrets
+   ├─ 6. Secret <name>-entra: tenant-id, client-id, client-secret, issuer, dex-config.yaml
+   └─ 7. status: appId, servicePrincipalId, secret key/expiry, appliedSpecHash, approvedBy, changeRef
+every Entra mutation: audit "attempted" -> call -> "succeeded"/"failed" (JSON + Kubernetes Event)
 ```
 
 Decisions worth knowing:
 
+- **Fail closed.** Approval is required unless `REQUIRE_APPROVAL=false`;
+  redirect domains must be allow-listed; loopback redirects are off by default.
+- **Approval is bound to content.** The approver signs off a SHA-256 of the
+  canonical spec (`entra-controller spec-hash file.yaml`). Any later edit
+  without a new approval stops reconciliation.
 - **Idempotency via `uniqueName`.** Graph's upsert keyed on an alternate key
   means a lost status or a crash mid-reconcile never creates a duplicate app.
-- **Naming guardrail.** Every app is `NAME_PREFIX` + namespace + name, and the
-  display name is prefixed too, so IAM can see at a glance what the platform owns.
-- **Least privilege.** The controller only needs `Application.ReadWrite.OwnedBy`.
-  Apps it creates are owned by it, so it cannot touch anything else.
-- **No stored credential.** Auth is workload identity federation: the projected
-  service account token is exchanged for a Graph token. `AZURE_CLIENT_SECRET` is
-  accepted for local dev only.
+- **Drift is corrected and audited.** Portal edits to name, audience, group
+  claims, redirect URIs, owners or secrets are reverted with a `drift_detected` record.
+- **Least privilege.** Only `Application.ReadWrite.OwnedBy`, so the controller
+  cannot touch apps it did not create.
+- **No stored credential.** Workload identity federation. Client-secret auth
+  exists only for local dev behind `ALLOW_CLIENT_SECRET_AUTH=true`.
+- **Crash-safe rotation.** The delivered key ID lives on the Secret; any Entra
+  password that is not the delivered one (or the previous one inside the grace
+  window) is revoked, which also removes hand-added secrets.
 - **Dex in front.** With `spec.dex.issuerURL` set, Entra only sees
-  `<issuer>/callback`; the team's own redirect URIs go into the Dex static
-  client. Without `dex`, they go straight onto the Entra app.
-- **Rotate, deliver, then revoke.** A new secret is written to the Kubernetes
-  Secret before the old Entra password is removed.
-- **Delete.** The finalizer deletes the app registration; Entra keeps it
-  soft-deleted for 30 days, so mistakes are recoverable.
+  `<issuer>/callback`; the team's redirect URIs go into the Dex static client.
+- **Retain by default on delete.** Secrets are revoked, the registration stays
+  as evidence. `deletionPolicy: Delete` soft-deletes it (30 days in Entra).
 
 ## Not done yet
 
-- OpenBao sink (KV v2) instead of, or as well as, the Kubernetes Secret. The
-  Entra secret and the Dex static-client secret share one Secret today; split them.
-- Group assignment. `groups` currently drives the Dex group filter and switches
-  Entra to `ApplicationGroup` claims. Assigning groups to the app needs
-  `AppRoleAssignment.ReadWrite.All`, which IAM should approve separately.
-- A Dex config renderer that merges per-client fragments into one Dex per team.
-- Admission policy (allowed redirect domains per namespace, privileged groups
-  need approval), events, metrics, leader election.
-- Machine-to-machine: client credentials against Entra directly, since Dex has
-  no client credentials grant.
-- Integration test against a dev tenant.
+See "Open items before production" in [docs/compliance.md](docs/compliance.md):
+leader election, OpenBao sink, the approval stamping job, Entra audit log
+reconciliation, egress restriction, group assignment, integration tests.
 
 ## Run
 
@@ -75,6 +79,10 @@ cargo run -- crd > deploy/crd.yaml        # regenerate the CRD
 kubectl apply -f deploy/crd.yaml -f deploy/rbac.yaml -f deploy/deployment.yaml
 kubectl apply -f deploy/example-iamclient.yaml
 
-# local dev against a test tenant
-AZURE_TENANT_ID=... AZURE_CLIENT_ID=... AZURE_CLIENT_SECRET=... cargo run
+cargo run -- spec-hash deploy/example-iamclient.yaml   # hash an approver signs off
+kubectl apply -f deploy/admission-policy.yaml
+
+# local dev against a non-production tenant only
+ALLOW_CLIENT_SECRET_AUTH=true AZURE_TENANT_ID=... AZURE_CLIENT_ID=... AZURE_CLIENT_SECRET=... \
+  ALLOWED_REDIRECT_DOMAINS=.dev.example.com cargo run
 ```

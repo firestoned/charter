@@ -3,12 +3,22 @@ kind: IAMClient
 metadata:
   name: payments-portal
   namespace: team-payments
+  annotations:
+    # Written by the merge pipeline from the approved PR, never by hand.
+    # Only the GitOps identity may set these (see admission-policy.yaml).
+    iam.rbc.example/requested-by: "alice@example.com"
+    iam.rbc.example/approved-by: "bob@example.com"
+    iam.rbc.example/change-ref: "CHG0012345"
+    # Output of: entra-controller spec-hash deploy/example-iamclient.yaml
+    iam.rbc.example/approved-spec-hash: "ae759d8f2a82d7ee32bd1708dc06dc9c2189fac7ac49f9fe6f9795e582fd5c7d"
 spec:
   displayName: Payments Portal
   redirectURIs:
     - https://payments.apps.example.rbc.com/callback
   groups: ["APP-Payments-Users", "APP-Payments-Admins"]
   secretRotation: 90d
-  owners: []          # Entra object IDs of human owners
+  owners:
+    - 11111111-1111-1111-1111-111111111111   # Entra object ID of a human owner
+  deletionPolicy: Retain
   dex:
     issuerURL: https://dex.team-payments.apps.example.rbc.com

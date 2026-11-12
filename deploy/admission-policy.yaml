@@ -1,0 +1,47 @@
+# Only the GitOps identity may create, change or delete IAMClients, so every
+# change has passed PR review in Git. The controller re-checks the approval
+# stamp (requester != approver, change ref, spec hash) as defence in depth.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: iamclient-gitops-only
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["iam.rbc.example"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["iamclients"]
+  matchConditions:
+    # Let the controller manage its finalizer and status.
+    - name: not-controller
+      expression: "request.userInfo.username != 'system:serviceaccount:iamaas-system:entra-controller'"
+  validations:
+    - expression: "request.userInfo.username in params.data.allowedWriters.split(',')"
+      messageExpression: "'IAMClient changes must come from GitOps, not ' + request.userInfo.username"
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: iamclient-gitops-only
+spec:
+  policyName: iamclient-gitops-only
+  validationActions: ["Deny", "Audit"]
+  paramRef:
+    name: iamclient-policy
+    namespace: iamaas-system
+    parameterNotFoundAction: Deny
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: iamclient-policy
+  namespace: iamaas-system
+data:
+  allowedWriters: "system:serviceaccount:argocd:argocd-application-controller"
+# Related controls outside this file: restrict get/list on Secrets in team
+# namespaces with RBAC, and prefer the OpenBao sink in production.

@@ -42,6 +42,12 @@ pub struct IAMClientSpec {
     #[serde(default)]
     pub owners: Vec<String>,
 
+    /// What happens in Entra when this IAMClient is deleted. `Retain` (default)
+    /// revokes the client secrets but keeps the registration for audit and
+    /// recovery; `Delete` removes it (Entra soft-deletes for 30 days).
+    #[serde(default)]
+    pub deletion_policy: DeletionPolicy,
+
     /// Optional Dex front door for this client.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dex: Option<DexSpec>,
@@ -54,6 +60,13 @@ pub struct DexSpec {
     /// Entra gets `<issuerURL>/callback` as its only redirect URI.
     #[serde(rename = "issuerURL")]
     pub issuer_url: String,
+}
+
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, JsonSchema, PartialEq, Eq)]
+pub enum DeletionPolicy {
+    #[default]
+    Retain,
+    Delete,
 }
 
 fn default_rotation() -> String {
@@ -76,6 +89,10 @@ pub struct IAMClientStatus {
     /// Kubernetes Secret holding the credentials and Dex config.
     pub secret_name: Option<String>,
     pub observed_generation: Option<i64>,
+    /// Evidence of the approval the last applied spec was reconciled under.
+    pub applied_spec_hash: Option<String>,
+    pub approved_by: Option<String>,
+    pub change_ref: Option<String>,
     #[serde(default)]
     pub conditions: Vec<Condition>,
 }

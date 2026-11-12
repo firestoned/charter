@@ -1,6 +1,8 @@
+mod audit;
 mod controller;
 mod crd;
 mod graph;
+mod policy;
 
 use kube::CustomResourceExt;
 use std::sync::Arc;
@@ -8,9 +10,21 @@ use std::sync::Arc;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // `entra-controller crd` prints the CRD YAML for `kubectl apply`.
-    if std::env::args().nth(1).as_deref() == Some("crd") {
-        print!("{}", serde_yaml::to_string(&crd::IAMClient::crd())?);
-        return Ok(());
+    // `entra-controller spec-hash <file>` prints the hash an approver signs off.
+    match std::env::args().nth(1).as_deref() {
+        Some("crd") => {
+            print!("{}", serde_norway::to_string(&crd::IAMClient::crd())?);
+            return Ok(());
+        }
+        Some("spec-hash") => {
+            let path = std::env::args()
+                .nth(2)
+                .ok_or_else(|| anyhow::anyhow!("usage: spec-hash <iamclient.yaml>"))?;
+            let obj: crd::IAMClient = serde_norway::from_str(&std::fs::read_to_string(path)?)?;
+            println!("{}", policy::spec_hash(&obj.spec));
+            return Ok(());
+        }
+        _ => {}
     }
 
     tracing_subscriber::fmt()
@@ -20,12 +34,21 @@ async fn main() -> anyhow::Result<()> {
         .json()
         .init();
 
+    let client = kube::Client::try_default().await?;
+    let graph = graph::Graph::from_env()?;
+    let policy = policy::Policy::from_env();
+    let grace_hours = std::env::var("ROTATION_GRACE_HOURS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(24);
+    tracing::info!(?policy, grace_hours, "starting entra-controller");
     let ctx = Arc::new(controller::Ctx {
-        client: kube::Client::try_default().await?,
-        graph: graph::Graph::from_env()?,
-        name_prefix: std::env::var("NAME_PREFIX").unwrap_or_else(|_| "iamaas-".into()),
+        audit: audit::Auditor::new(client.clone(), graph.client_id.clone()),
+        client,
+        graph,
+        policy,
+        rotation_grace: chrono::Duration::hours(grace_hours),
     });
-    tracing::info!(prefix = %ctx.name_prefix, "starting entra-controller");
     controller::run(ctx).await;
     Ok(())
 }

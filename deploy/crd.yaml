@@ -30,6 +30,16 @@ spec:
           spec:
             description: A team's request for an Entra app registration, plus the OIDC wiring around it.
             properties:
+              deletionPolicy:
+                default: Retain
+                description: |-
+                  What happens in Entra when this IAMClient is deleted. `Retain` (default)
+                  revokes the client secrets but keeps the registration for audit and
+                  recovery; `Delete` removes it (Entra soft-deletes for 30 days).
+                enum:
+                - Retain
+                - Delete
+                type: string
               dex:
                 description: Optional Dex front door for this client.
                 nullable: true
@@ -82,6 +92,16 @@ spec:
             properties:
               appId:
                 description: Application (client) ID of the Entra app registration.
+                nullable: true
+                type: string
+              appliedSpecHash:
+                description: Evidence of the approval the last applied spec was reconciled under.
+                nullable: true
+                type: string
+              approvedBy:
+                nullable: true
+                type: string
+              changeRef:
                 nullable: true
                 type: string
               conditions:

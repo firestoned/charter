@@ -1,0 +1,22 @@
+# cargo-deny: fails CI on known vulnerabilities, unapproved licences,
+# yanked crates or crates from unknown sources.
+[advisories]
+yanked = "deny"
+ignore = []
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "CDLA-Permissive-2.0", "OpenSSL"]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[licenses.private]
+# Internal, unpublished crate: no licence field required.
+ignore = true
