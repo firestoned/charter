@@ -1,12 +1,28 @@
-# Only the GitOps identity may create, change or delete IAMClients, so every
-# change has passed PR review in Git. The controller re-checks the approval
-# stamp (requester != approver, change ref, spec hash) as defence in depth.
+# Who may do what to an IAMClient, enforced by the API server:
+#   - create and delete: platform admins, or the Flux provisioner identity
+#   - change admin-only fields or approval annotations: same
+#   - change redirectURIs: the owning team (granted per client by RBAC, see flux/)
+# The controller re-checks creation and admin changes as defence in depth.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: iamclient-policy
+  namespace: iamaas-system
+data:
+  # Comma-separated Kubernetes usernames allowed to provision (Flux ResourceSet SA).
+  provisioners: "system:serviceaccount:iamaas-system:iamaas-provisioner"
+  # Comma-separated groups of platform admins (Entra group object IDs on AKS).
+  adminGroups: "00000000-0000-0000-0000-00000000ad01"
+  # Leading dot: host must equal the domain or be a subdomain of it.
+  allowedRedirectDomains: ".apps.example.rbc.com"
+---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
-  name: iamclient-gitops-only
+  name: iamclient-admin-gates
 spec:
   failurePolicy: Fail
+  paramKind: { apiVersion: v1, kind: ConfigMap }
   matchConstraints:
     resourceRules:
       - apiGroups: ["iam.rbc.example"]
@@ -14,34 +30,91 @@ spec:
         operations: ["CREATE", "UPDATE", "DELETE"]
         resources: ["iamclients"]
   matchConditions:
-    # Let the controller manage its finalizer and status.
+    # The controller only manages its finalizer; status is a separate subresource.
     - name: not-controller
       expression: "request.userInfo.username != 'system:serviceaccount:iamaas-system:entra-controller'"
+  variables:
+    - name: isAdmin
+      expression: >-
+        request.userInfo.username in params.data.provisioners.split(',') ||
+        request.userInfo.groups.exists(g, g in params.data.adminGroups.split(','))
+    - name: approvalKeys
+      expression: "['iam.rbc.example/requested-by', 'iam.rbc.example/approved-by', 'iam.rbc.example/change-ref']"
   validations:
-    - expression: "request.userInfo.username in params.data.allowedWriters.split(',')"
-      messageExpression: "'IAMClient changes must come from GitOps, not ' + request.userInfo.username"
-  paramKind:
-    apiVersion: v1
-    kind: ConfigMap
+    - expression: "request.operation == 'UPDATE' || variables.isAdmin"
+      messageExpression: "'only platform admins can ' + request.operation.lowerAscii() + ' an IAMClient'"
+      reason: Forbidden
+    # Every spec field except redirectURIs is admin-only. Keep this list in step
+    # with OWNER_EDITABLE in src/policy.rs; the controller's admin hash catches misses.
+    - expression: >-
+        request.operation != 'UPDATE' || variables.isAdmin || (
+          object.spec.displayName == oldObject.spec.displayName &&
+          object.spec.?owners == oldObject.spec.?owners &&
+          object.spec.?groups == oldObject.spec.?groups &&
+          object.spec.?secretRotation == oldObject.spec.?secretRotation &&
+          object.spec.?deletionPolicy == oldObject.spec.?deletionPolicy &&
+          object.spec.?dex == oldObject.spec.?dex)
+      message: "owners may only change spec.redirectURIs; other fields need a platform admin"
+      reason: Forbidden
+    - expression: >-
+        request.operation != 'UPDATE' || variables.isAdmin ||
+        variables.approvalKeys.all(k, object.metadata.?annotations[?k] == oldObject.metadata.?annotations[?k])
+      message: "approval annotations can only be set by platform admins"
+      reason: Forbidden
+    - expression: >-
+        request.operation == 'DELETE' || !has(object.spec.redirectURIs) ||
+        object.spec.redirectURIs.all(u, isURL(u) && !u.contains('*') &&
+          url(u).getScheme() == 'https' &&
+          params.data.allowedRedirectDomains.split(',').exists(d, ('.' + url(u).getHostname()).endsWith(d)))
+      message: "redirect URIs must be https, without wildcards, on an allowed domain"
+      reason: Invalid
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
 metadata:
-  name: iamclient-gitops-only
+  name: iamclient-admin-gates
 spec:
-  policyName: iamclient-gitops-only
+  policyName: iamclient-admin-gates
   validationActions: ["Deny", "Audit"]
   paramRef:
     name: iamclient-policy
     namespace: iamaas-system
     parameterNotFoundAction: Deny
 ---
-apiVersion: v1
-kind: ConfigMap
+# Stamp the real author of every create/update so the controller's audit
+# records say who changed what. Any value a user writes is overwritten.
+# MutatingAdmissionPolicy is beta (admissionregistration.k8s.io/v1beta1) on
+# recent Kubernetes; confirm it is enabled on the target AKS version, or use
+# the equivalent Kyverno mutate rule.
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: MutatingAdmissionPolicy
 metadata:
-  name: iamclient-policy
-  namespace: iamaas-system
-data:
-  allowedWriters: "system:serviceaccount:argocd:argocd-application-controller"
-# Related controls outside this file: restrict get/list on Secrets in team
-# namespaces with RBAC, and prefer the OpenBao sink in production.
+  name: iamclient-stamp-author
+spec:
+  failurePolicy: Fail
+  reinvocationPolicy: Never
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["iam.rbc.example"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["iamclients"]
+  matchConditions:
+    - name: not-controller
+      expression: "request.userInfo.username != 'system:serviceaccount:iamaas-system:entra-controller'"
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >-
+          Object{
+            metadata: Object.metadata{
+              annotations: {"iam.rbc.example/last-modified-by": request.userInfo.username}
+            }
+          }
+---
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: iamclient-stamp-author
+spec:
+  policyName: iamclient-stamp-author

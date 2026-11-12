@@ -9,7 +9,12 @@ use sha2::{Digest, Sha256};
 pub const ANN_REQUESTED_BY: &str = "iam.rbc.example/requested-by";
 pub const ANN_APPROVED_BY: &str = "iam.rbc.example/approved-by";
 pub const ANN_CHANGE_REF: &str = "iam.rbc.example/change-ref";
-pub const ANN_APPROVED_HASH: &str = "iam.rbc.example/approved-spec-hash";
+/// Stamped by the MutatingAdmissionPolicy from request.userInfo; cannot be forged.
+pub const ANN_LAST_MODIFIED_BY: &str = "iam.rbc.example/last-modified-by";
+
+/// Fields the owning team may change without an admin. Everything else in the
+/// spec is admin-only (enforced at admission, re-checked by the controller).
+pub const OWNER_EDITABLE: &[&str] = &["redirectURIs"];
 
 #[derive(Debug, Clone)]
 pub struct Policy {
@@ -104,6 +109,17 @@ pub fn spec_hash(spec: &IAMClientSpec) -> String {
     hex::encode(Sha256::digest(canonical(&v).as_bytes()))
 }
 
+/// Hash of the admin-only part of the spec. A change here needs a new approval.
+pub fn admin_hash(spec: &IAMClientSpec) -> String {
+    let mut v = serde_json::to_value(spec).unwrap_or_default();
+    if let Some(m) = v.as_object_mut() {
+        for k in OWNER_EDITABLE {
+            m.remove(*k);
+        }
+    }
+    hex::encode(Sha256::digest(canonical(&v).as_bytes()))
+}
+
 /// JSON with object keys sorted, so the hash does not depend on field order.
 fn canonical(v: &serde_json::Value) -> String {
     use serde_json::Value::*;
@@ -136,7 +152,7 @@ pub struct Approval {
     pub requested_by: Option<String>,
     pub approved_by: Option<String>,
     pub change_ref: Option<String>,
-    pub approved_hash: Option<String>,
+    pub last_modified_by: Option<String>,
 }
 
 impl Approval {
@@ -151,27 +167,55 @@ impl Approval {
             requested_by: get(ANN_REQUESTED_BY),
             approved_by: get(ANN_APPROVED_BY),
             change_ref: get(ANN_CHANGE_REF),
-            approved_hash: get(ANN_APPROVED_HASH),
+            last_modified_by: get(ANN_LAST_MODIFIED_BY),
         }
     }
 
-    /// Valid only if it names a requester, a different approver, a change
-    /// reference, and the hash of exactly the spec being applied.
-    pub fn verify(&self, current_hash: &str) -> Result<(), String> {
+    /// Valid only if it names a requester, a different approver and a change reference.
+    pub fn verify(&self) -> Result<(), String> {
         let req = self.requested_by.as_deref().ok_or("missing requested-by")?;
         let appr = self.approved_by.as_deref().ok_or("missing approved-by")?;
         self.change_ref.as_deref().ok_or("missing change-ref")?;
-        let h = self
-            .approved_hash
-            .as_deref()
-            .ok_or("missing approved-spec-hash")?;
         if req.eq_ignore_ascii_case(appr) {
             return Err("separation of duties: approver is the requester".into());
         }
-        if h != current_hash {
-            return Err("spec changed since approval (hash mismatch)".into());
-        }
         Ok(())
+    }
+}
+
+/// What kind of change this reconcile applies, which decides whether an admin
+/// approval is needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeKind {
+    /// Nothing applied yet: admin approval required.
+    Create,
+    /// Admin-only fields differ from what was last applied: a new approval
+    /// (new change-ref) is required.
+    AdminChange,
+    /// Only owner-editable fields changed, or nothing changed.
+    OwnerChange,
+}
+
+pub fn classify(applied_admin_hash: Option<&str>, current_admin_hash: &str) -> ChangeKind {
+    match applied_admin_hash {
+        None => ChangeKind::Create,
+        Some(h) if h != current_admin_hash => ChangeKind::AdminChange,
+        _ => ChangeKind::OwnerChange,
+    }
+}
+
+/// The approval gate. `last_change_ref` is the change the current state was applied under.
+pub fn gate(kind: ChangeKind, a: &Approval, last_change_ref: Option<&str>) -> Result<(), String> {
+    match kind {
+        ChangeKind::OwnerChange => Ok(()),
+        ChangeKind::Create => a.verify(),
+        ChangeKind::AdminChange => {
+            a.verify()?;
+            if a.change_ref.as_deref() == last_change_ref {
+                return Err("admin-only fields changed without a new change-ref".into());
+            }
+            Ok(())
+        }
     }
 }
 
@@ -218,20 +262,53 @@ mod tests {
             requested_by: Some("alice".into()),
             approved_by: Some("bob".into()),
             change_ref: Some("CHG0012345".into()),
-            approved_hash: Some("abc".into()),
+            last_modified_by: None,
         };
-        assert!(ok.verify("abc").is_ok());
-        assert!(ok.verify("def").is_err());
+        assert!(ok.verify().is_ok());
         let sod = Approval {
             approved_by: Some("ALICE".into()),
             ..ok.clone()
         };
-        assert!(sod.verify("abc").is_err());
+        assert!(sod.verify().is_err());
         let no_ref = Approval {
             change_ref: None,
-            ..ok
+            ..ok.clone()
         };
-        assert!(no_ref.verify("abc").is_err());
+        assert!(no_ref.verify().is_err());
+
+        // Owner edits need nothing; creation and admin changes need approval.
+        let none = Approval {
+            requested_by: None,
+            approved_by: None,
+            change_ref: None,
+            last_modified_by: Some("carol".into()),
+        };
+        assert!(gate(ChangeKind::OwnerChange, &none, Some("CHG1")).is_ok());
+        assert!(gate(ChangeKind::Create, &none, None).is_err());
+        assert!(gate(ChangeKind::Create, &ok, None).is_ok());
+        assert!(gate(ChangeKind::AdminChange, &ok, Some("CHG0012345")).is_err());
+        assert!(gate(ChangeKind::AdminChange, &ok, Some("CHG0000001")).is_ok());
+    }
+
+    #[test]
+    fn owner_fields_do_not_change_admin_hash() {
+        let y = |r: &str, g: &str| -> IAMClientSpec {
+            serde_norway::from_str(&format!(
+                "displayName: X\nredirectURIs: [{r}]\ngroups: [{g}]\nowners: [o1]\n"
+            ))
+            .unwrap()
+        };
+        assert_eq!(
+            admin_hash(&y("https://a/cb", "G1")),
+            admin_hash(&y("https://b/cb", "G1"))
+        );
+        assert_ne!(
+            admin_hash(&y("https://a/cb", "G1")),
+            admin_hash(&y("https://a/cb", "G2"))
+        );
+        assert_eq!(classify(None, "h"), ChangeKind::Create);
+        assert_eq!(classify(Some("h"), "h"), ChangeKind::OwnerChange);
+        assert_eq!(classify(Some("g"), "h"), ChangeKind::AdminChange);
     }
 
     #[test]

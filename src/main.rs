@@ -10,21 +10,9 @@ use std::sync::Arc;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // `entra-controller crd` prints the CRD YAML for `kubectl apply`.
-    // `entra-controller spec-hash <file>` prints the hash an approver signs off.
-    match std::env::args().nth(1).as_deref() {
-        Some("crd") => {
-            print!("{}", serde_norway::to_string(&crd::IAMClient::crd())?);
-            return Ok(());
-        }
-        Some("spec-hash") => {
-            let path = std::env::args()
-                .nth(2)
-                .ok_or_else(|| anyhow::anyhow!("usage: spec-hash <iamclient.yaml>"))?;
-            let obj: crd::IAMClient = serde_norway::from_str(&std::fs::read_to_string(path)?)?;
-            println!("{}", policy::spec_hash(&obj.spec));
-            return Ok(());
-        }
-        _ => {}
+    if std::env::args().nth(1).as_deref() == Some("crd") {
+        print!("{}", serde_norway::to_string(&crd::IAMClient::crd())?);
+        return Ok(());
     }
 
     tracing_subscriber::fmt()

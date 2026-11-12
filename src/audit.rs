@@ -39,6 +39,9 @@ pub struct Subject {
     pub uid: String,
     pub generation: Option<i64>,
     pub spec_hash: String,
+    pub admin_hash: String,
+    /// Kubernetes user who last changed the object (admission-stamped).
+    pub last_modified_by: Option<String>,
     pub unique_name: String,
     pub requested_by: Option<String>,
     pub approved_by: Option<String>,

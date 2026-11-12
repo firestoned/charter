@@ -16,24 +16,48 @@ confirmed against RBC's own control library before use.
    Reconciling the two is a detective control.
 4. **Least privilege, no standing secrets.** Graph `Application.ReadWrite.OwnedBy`
    only; workload identity federation instead of a client secret.
-5. **Git is the system of record for intent; Entra is converged to it.**
-   Out-of-band changes are detected, audited and reverted.
+5. **The IAMClient is the system of record for intent; Entra is converged to it.**
+   Out-of-band changes in Entra are detected, audited and reverted.
+6. **Admins create, owners maintain.** Creation, deletion and admin-only
+   fields need a platform admin and a change reference. Owners may change
+   redirect URIs themselves, within the redirect domain policy.
 
 ## How a change flows
 
+**Create (admin only)**
+
 ```
-Developer PR (IAMClient YAML)
-  -> branch protection: CODEOWNERS review by Enterprise IAM for prod namespaces
-  -> merge pipeline stamps annotations: requested-by, approved-by, change-ref,
-     approved-spec-hash (from `entra-controller spec-hash`)
-  -> GitOps applies (only identity allowed by ValidatingAdmissionPolicy)
+Team request -> approval in the change system (requester != approver, CHG ref)
+  -> platform admin adds a ResourceSetInputProvider in iamaas-system
+     (requestedBy, approvedBy, changeRef, owners, ownerGroup, groups, ...)
+  -> Flux ResourceSet, as the iamaas-provisioner SA, renders:
+       IAMClient + Role/RoleBinding letting ownerGroup edit that one IAMClient
+  -> admission: only admins/provisioner may create; author stamped
   -> controller: policy check -> approval check -> audited Graph calls
-  -> status records appliedSpecHash, approvedBy, changeRef
 ```
 
-If anyone edits the spec without a new approval, the hash no longer matches and
-the controller stops with `Ready=False, reason=PendingApproval` and a `Denied`
-audit record. It does not partially apply.
+**Owner update (redirect URIs)**
+
+```
+Owner: kubectl edit / patch iamclient payments-portal  (RBAC: that object only)
+  -> admission: only spec.redirectURIs may differ; https, allowed domain, no wildcard;
+     last-modified-by stamped from the authenticated user
+  -> controller: policy check; admin hash unchanged so no admin approval needed;
+     audited Graph update records last_modified_by
+```
+
+**Admin change (owners, groups, rotation, Dex, deletion policy, display name)**
+
+Admin updates the input provider with a new change reference. Admission blocks
+anyone else from changing these fields. The controller backstops it: if the
+hash of the admin-only fields changed and the change reference did not, it
+stops with `Ready=False, reason=PendingApproval` and a `denied` audit record,
+and applies nothing.
+
+The Kubernetes API server audit log records every write to IAMClients with the
+authenticated user; together with `last-modified-by` and the controller's
+records (which carry the object's generation) this gives a full chain from
+person to Entra change.
 
 ## Audit record
 
@@ -45,7 +69,8 @@ shipped to the SIEM with immutable retention, and mirrored as a Kubernetes Event
 | `seq`, `prev_hash` | Per-process sequence and SHA-256 chain; gaps or edits are detectable |
 | `time`, `actor` | When, and which workload identity acted |
 | `action`, `outcome` | e.g. `add_password` / `attempted`, `succeeded`, `failed`, `denied`, `info` |
-| `subject` | Namespace, name, UID, generation, spec hash, Entra uniqueName |
+| `subject` | Namespace, name, UID, generation, spec hash, admin-field hash, Entra uniqueName |
+| `subject.last_modified_by` | Kubernetes user who last wrote the object, stamped by admission |
 | `subject.requested_by`, `approved_by`, `change_ref` | Who asked, who approved, which change |
 | `subject.correlation_id` | Ties all records from one reconcile together |
 | `details` | Non-secret parameters (key IDs, fields changed, owner IDs) |
@@ -63,7 +88,8 @@ Actions recorded: `policy_check`, `approval_check`, `create_application`,
 
 | Control objective | Mechanism | Evidence an auditor can pull | SOX ITGC area | NIST SP 800-53 | OSFI B-13 domain |
 |---|---|---|---|---|---|
-| Changes are authorised before implementation | Approval stamp verified against spec hash; VAP restricts writers to GitOps | PR approvals, `approval_check` records, `status.changeRef` | Change management | CM-3, CM-5 | Technology operations (change management) |
+| Changes are authorised before implementation | Creation and admin-only fields need an admin and a change reference (admission + controller backstop) | Change tickets, `approval_check` records, `status.changeRef`, API server audit log | Change management | CM-3, CM-5 | Technology operations (change management) |
+| Owner self-service is bounded | Owners hold RBAC on their own IAMClient only; admission limits them to `redirectURIs` within allowed domains | Per-client Role/RoleBinding, VAP denials, `last_modified_by` in audit records | Logical access, change management | AC-3, AC-6, CM-5 | Cyber security (identity and access) |
 | Separation of duties | Requester must differ from approver; controller cannot approve | Annotations and audit `subject` fields | Change management | AC-5 | Governance |
 | Least privilege for automation | `Application.ReadWrite.OwnedBy`; owner set limited to spec + controller | Entra app role assignment for controller SP | Logical access | AC-6 | Cyber security (identity and access) |
 | No standing credentials for automation | Workload identity federation; client-secret auth disabled unless `ALLOW_CLIENT_SECRET_AUTH=true` | Deployment manifest, absence of secrets on controller SP | Logical access | IA-5 | Cyber security |
@@ -82,8 +108,14 @@ Actions recorded: `policy_check`, `approval_check`, `create_application`,
 - **OpenBao sink.** Deliver secrets to OpenBao (KV v2, versioned, with its own
   audit device) instead of a Kubernetes Secret; split the Dex and Entra secrets.
   Until then, enable KMS encryption at rest and restrict Secret read RBAC.
-- **Approval stamping job.** The merge pipeline step that writes the approval
-  annotations must itself be a controlled, reviewed component.
+- **Approval intake.** Today an admin creates the ResourceSetInputProvider by
+  hand. Connect it to the change system (e.g. an ExternalService input
+  provider backed by the approval API) so approvals are not retyped.
+- **Admission policies in a real cluster.** The CEL in `deploy/admission-policy.yaml`
+  has not been run against an API server yet, and MutatingAdmissionPolicy is
+  beta; confirm availability on the target AKS version.
+- **Flux field ownership.** Confirm that the ResourceSet does not revert
+  owner-set `redirectURIs` (it should not, since it never sets that field).
 - **Entra log reconciliation.** A scheduled job comparing Entra directory audit
   logs for the controller's SP against the controller's audit stream.
 - **Egress restriction.** Allow only `login.microsoftonline.com`,

@@ -19,10 +19,10 @@ use serde::{Deserialize, Serialize};
 )]
 #[serde(rename_all = "camelCase")]
 pub struct IAMClientSpec {
-    /// Human-readable name. The controller prefixes it with the platform naming prefix.
+    /// Human-readable name. Admin-only. The controller prefixes it with the platform naming prefix.
     pub display_name: String,
 
-    /// Redirect URIs of the team's application.
+    /// Redirect URIs of the team's application. Owner-editable.
     /// With `dex` set, these become Dex static-client redirect URIs and Entra only
     /// ever sees Dex's own callback. Without `dex`, they go straight onto the Entra app.
     #[serde(rename = "redirectURIs", default)]
@@ -91,6 +91,8 @@ pub struct IAMClientStatus {
     pub observed_generation: Option<i64>,
     /// Evidence of the approval the last applied spec was reconciled under.
     pub applied_spec_hash: Option<String>,
+    /// Hash of the admin-only fields last applied; a mismatch needs a new approval.
+    pub applied_admin_hash: Option<String>,
     pub approved_by: Option<String>,
     pub change_ref: Option<String>,
     #[serde(default)]

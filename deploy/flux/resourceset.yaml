@@ -1,0 +1,127 @@
+# Admin provisioning path. Platform admins approve a request by creating a
+# ResourceSetInputProvider (one per client) in iamaas-system, which only they
+# can write. Flux renders the IAMClient plus a per-client Role that lets the
+# owning team edit that one IAMClient's redirectURIs, and nothing else.
+#
+# redirectURIs is deliberately absent from the template: Flux applies with
+# server-side apply and only owns the fields it sets, so owner edits to
+# redirectURIs are not reverted. Verify this in a dev cluster before relying on it.
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: iam-clients
+  namespace: iamaas-system
+spec:
+  serviceAccountName: iamaas-provisioner
+  inputsFrom:
+    - apiVersion: fluxcd.controlplane.io/v1
+      kind: ResourceSetInputProvider
+      selector:
+        matchLabels:
+          iam.rbc.example/approved: "true"
+  resourcesTemplate: |
+    ---
+    apiVersion: iam.rbc.example/v1alpha1
+    kind: IAMClient
+    metadata:
+      name: << inputs.name >>
+      namespace: << inputs.namespace >>
+      annotations:
+        iam.rbc.example/requested-by: << inputs.requestedBy | quote >>
+        iam.rbc.example/approved-by: << inputs.approvedBy | quote >>
+        iam.rbc.example/change-ref: << inputs.changeRef | quote >>
+    spec:
+      displayName: << inputs.displayName | quote >>
+      owners: << inputs.owners | toJson >>
+      groups: << inputs.groups | toJson >>
+      secretRotation: << inputs.secretRotation | default "90d" | quote >>
+      deletionPolicy: << inputs.deletionPolicy | default "Retain" >>
+      dex:
+        issuerURL: << inputs.dexIssuerURL | quote >>
+    ---
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: iamclient-<< inputs.name >>-owner
+      namespace: << inputs.namespace >>
+    rules:
+      - apiGroups: ["iam.rbc.example"]
+        resources: ["iamclients"]
+        resourceNames: [<< inputs.name | quote >>]
+        verbs: ["get", "patch", "update"]
+      - apiGroups: ["iam.rbc.example"]
+        resources: ["iamclients/status"]
+        resourceNames: [<< inputs.name | quote >>]
+        verbs: ["get"]
+    ---
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: iamclient-<< inputs.name >>-owner
+      namespace: << inputs.namespace >>
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: Role
+      name: iamclient-<< inputs.name >>-owner
+    subjects:
+      - apiGroup: rbac.authorization.k8s.io
+        kind: Group
+        name: << inputs.ownerGroup | quote >>
+---
+# One approved request. Created by a platform admin (or by an approval
+# workflow acting as one) after the change is approved.
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: payments-portal
+  namespace: iamaas-system
+  labels:
+    iam.rbc.example/approved: "true"
+spec:
+  type: Static
+  defaultValues:
+    name: payments-portal
+    namespace: team-payments
+    displayName: Payments Portal
+    requestedBy: alice@example.com
+    approvedBy: bob@example.com
+    changeRef: CHG0012345
+    owners: ["11111111-1111-1111-1111-111111111111"]
+    ownerGroup: "22222222-2222-2222-2222-222222222222"   # Entra group of the owning team
+    groups: ["APP-Payments-Users", "APP-Payments-Admins"]
+    secretRotation: 90d
+    dexIssuerURL: https://dex.team-payments.apps.example.rbc.com
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: iamaas-provisioner
+  namespace: iamaas-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: iamaas-provisioner
+rules:
+  - apiGroups: ["iam.rbc.example"]
+    resources: ["iamclients"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["iam.rbc.example"]
+    resources: ["iamclients/status"]
+    verbs: ["get"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: iamaas-provisioner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: iamaas-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: iamaas-provisioner
+    namespace: iamaas-system

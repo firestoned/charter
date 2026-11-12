@@ -30,10 +30,11 @@ and the Graph module can be swapped for "write ASO objects" later.
 ## Design
 
 ```
-IAMClient (team namespace, written only by GitOps)
+IAMClient (created by admins via Flux ResourceSet; owners edit redirectURIs via the Kubernetes API)
    │ reconcile (finalizer: iam.rbc.example/entra-cleanup)
    ├─ 1. policy check     redirect domains, HTTPS, no wildcards, max secret lifetime, >=1 owner
-   ├─ 2. approval check   requested-by != approved-by, change-ref, approved-spec-hash == sha256(spec)
+   ├─ 2. approval check   create or admin-field change: requested-by != approved-by, new change-ref
+   │                      redirectURIs-only change: owner's authority, author stamped by admission
    │     (either failing: Ready=False, audit "denied", no Entra change)
    ├─ 3. read Entra state; create, or record drift and correct it
    ├─ 4. service principal; owners = spec.owners + controller (extras removed)
@@ -47,9 +48,14 @@ Decisions worth knowing:
 
 - **Fail closed.** Approval is required unless `REQUIRE_APPROVAL=false`;
   redirect domains must be allow-listed; loopback redirects are off by default.
-- **Approval is bound to content.** The approver signs off a SHA-256 of the
-  canonical spec (`entra-controller spec-hash file.yaml`). Any later edit
-  without a new approval stops reconciliation.
+- **Admins create, owners maintain.** Creating, deleting, or changing any
+  admin-only field (everything except `redirectURIs`) needs a platform admin
+  and a change reference. The owning team can change `redirectURIs` itself
+  through the Kubernetes API; admission stamps who did it and the redirect
+  domain policy still applies. See `deploy/admission-policy.yaml`.
+- **Delivery.** Admins approve by adding a `ResourceSetInputProvider`; a Flux
+  `ResourceSet` renders the `IAMClient` and a per-client Role for the owning
+  team (`deploy/flux/resourceset.yaml`).
 - **Idempotency via `uniqueName`.** Graph's upsert keyed on an alternate key
   means a lost status or a crash mid-reconcile never creates a duplicate app.
 - **Drift is corrected and audited.** Portal edits to name, audience, group
@@ -77,10 +83,8 @@ reconciliation, egress restriction, group assignment, integration tests.
 ```sh
 cargo run -- crd > deploy/crd.yaml        # regenerate the CRD
 kubectl apply -f deploy/crd.yaml -f deploy/rbac.yaml -f deploy/deployment.yaml
-kubectl apply -f deploy/example-iamclient.yaml
 
-cargo run -- spec-hash deploy/example-iamclient.yaml   # hash an approver signs off
-kubectl apply -f deploy/admission-policy.yaml
+kubectl apply -f deploy/admission-policy.yaml -f deploy/flux/resourceset.yaml
 
 # local dev against a non-production tenant only
 ALLOW_CLIENT_SECRET_AUTH=true AZURE_TENANT_ID=... AZURE_CLIENT_ID=... AZURE_CLIENT_SECRET=... \

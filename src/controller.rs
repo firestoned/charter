@@ -10,7 +10,7 @@
 use crate::audit::{Auditor, Outcome, Subject};
 use crate::crd::{Condition, DeletionPolicy, IAMClient, IAMClientStatus};
 use crate::graph::{Application, Graph, GraphError};
-use crate::policy::{Approval, Policy, spec_hash};
+use crate::policy::{Approval, ChangeKind, Policy, admin_hash, classify, gate, spec_hash};
 use base64::Engine;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::StreamExt;
@@ -120,6 +120,8 @@ fn subject(o: &IAMClient, ctx: &Ctx) -> Subject {
         uid: o.uid().unwrap_or_default(),
         generation: o.meta().generation,
         spec_hash: spec_hash(&o.spec),
+        admin_hash: admin_hash(&o.spec),
+        last_modified_by: a.last_modified_by,
         unique_name: unique_name(&ctx.policy.name_prefix, o),
         requested_by: a.requested_by,
         approved_by: a.approved_by,
@@ -178,22 +180,42 @@ async fn apply(o: &IAMClient, ctx: &Ctx) -> Result<Action, Error> {
         }
     };
 
-    // 2. Approval: a different person approved exactly this spec, under a change reference.
+    // 2. Approval. Creation and admin-only changes need an admin approval with
+    //    a change reference; owner-editable changes (redirect URIs) are
+    //    applied on the owner's authority and audited with who made them.
+    let kind = classify(status.applied_admin_hash.as_deref(), &subj.admin_hash);
+    let generation_changed = status.observed_generation != o.meta().generation;
     if ctx.policy.require_approval {
-        if let Err(why) = Approval::from(o).verify(&subj.spec_hash) {
+        if let Err(why) = gate(kind, &Approval::from(o), status.change_ref.as_deref()) {
             au.record(
                 &oref,
                 &subj,
                 "approval_check",
                 Outcome::Denied,
-                json!({ "reason": why }),
+                json!({ "change": format!("{kind:?}"), "reason": why }),
                 None,
             )
             .await;
             set_not_ready(o, ctx, &status, "PendingApproval", &why).await?;
             return Ok(Action::await_change());
         }
-    } else {
+        if generation_changed {
+            let basis = if kind == ChangeKind::OwnerChange {
+                "owner"
+            } else {
+                "admin_approval"
+            };
+            au.record(
+                &oref,
+                &subj,
+                "approval_check",
+                Outcome::Info,
+                json!({ "change": format!("{kind:?}"), "authority": basis }),
+                None,
+            )
+            .await;
+        }
+    } else if generation_changed {
         au.record(
             &oref,
             &subj,
@@ -480,8 +502,18 @@ async fn apply(o: &IAMClient, ctx: &Ctx) -> Result<Action, Error> {
         secret_name: Some(secret_name),
         observed_generation: o.meta().generation,
         applied_spec_hash: Some(subj.spec_hash.clone()),
-        approved_by: subj.approved_by.clone(),
-        change_ref: subj.change_ref.clone(),
+        applied_admin_hash: Some(subj.admin_hash.clone()),
+        // Keep the approval the admin-only state was applied under; owner edits don't change it.
+        approved_by: if kind == ChangeKind::OwnerChange {
+            status.approved_by.clone()
+        } else {
+            subj.approved_by.clone()
+        },
+        change_ref: if kind == ChangeKind::OwnerChange {
+            status.change_ref.clone()
+        } else {
+            subj.change_ref.clone()
+        },
         conditions: vec![condition(
             &status,
             o,

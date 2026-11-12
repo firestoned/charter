@@ -53,7 +53,7 @@ spec:
                 - issuerURL
                 type: object
               displayName:
-                description: Human-readable name. The controller prefixes it with the platform naming prefix.
+                description: Human-readable name. Admin-only. The controller prefixes it with the platform naming prefix.
                 type: string
               groups:
                 default: []
@@ -72,7 +72,7 @@ spec:
               redirectURIs:
                 default: []
                 description: |-
-                  Redirect URIs of the team's application.
+                  Redirect URIs of the team's application. Owner-editable.
                   With `dex` set, these become Dex static-client redirect URIs and Entra only
                   ever sees Dex's own callback. Without `dex`, they go straight onto the Entra app.
                 items:
@@ -92,6 +92,10 @@ spec:
             properties:
               appId:
                 description: Application (client) ID of the Entra app registration.
+                nullable: true
+                type: string
+              appliedAdminHash:
+                description: Hash of the admin-only fields last applied; a mismatch needs a new approval.
                 nullable: true
                 type: string
               appliedSpecHash:

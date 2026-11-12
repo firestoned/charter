@@ -1,24 +1,23 @@
+# What Flux renders from the ResourceSet (see flux/resourceset.yaml), after
+# the owning team has added redirect URIs with `kubectl edit`.
 apiVersion: iam.rbc.example/v1alpha1
 kind: IAMClient
 metadata:
   name: payments-portal
   namespace: team-payments
   annotations:
-    # Written by the merge pipeline from the approved PR, never by hand.
-    # Only the GitOps identity may set these (see admission-policy.yaml).
-    iam.rbc.example/requested-by: "alice@example.com"
-    iam.rbc.example/approved-by: "bob@example.com"
-    iam.rbc.example/change-ref: "CHG0012345"
-    # Output of: entra-controller spec-hash deploy/example-iamclient.yaml
-    iam.rbc.example/approved-spec-hash: "ae759d8f2a82d7ee32bd1708dc06dc9c2189fac7ac49f9fe6f9795e582fd5c7d"
+    iam.rbc.example/requested-by: "alice@example.com"   # admin-only
+    iam.rbc.example/approved-by: "bob@example.com"      # admin-only
+    iam.rbc.example/change-ref: "CHG0012345"            # admin-only
+    # iam.rbc.example/last-modified-by is stamped by admission, never set by hand
 spec:
-  displayName: Payments Portal
-  redirectURIs:
+  displayName: Payments Portal                          # admin-only
+  redirectURIs:                                         # owner-editable
     - https://payments.apps.example.rbc.com/callback
-  groups: ["APP-Payments-Users", "APP-Payments-Admins"]
-  secretRotation: 90d
-  owners:
-    - 11111111-1111-1111-1111-111111111111   # Entra object ID of a human owner
-  deletionPolicy: Retain
-  dex:
+  groups: ["APP-Payments-Users", "APP-Payments-Admins"] # admin-only
+  secretRotation: 90d                                   # admin-only
+  owners:                                               # admin-only
+    - 11111111-1111-1111-1111-111111111111
+  deletionPolicy: Retain                                # admin-only
+  dex:                                                  # admin-only
     issuerURL: https://dex.team-payments.apps.example.rbc.com
