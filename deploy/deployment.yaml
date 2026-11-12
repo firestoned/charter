@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: entra-controller
+  namespace: iamaas-system
+spec:
+  replicas: 1   # single writer; add leader election before scaling out
+  selector:
+    matchLabels: { app: entra-controller }
+  template:
+    metadata:
+      labels:
+        app: entra-controller
+        azure.workload.identity/use: "true"   # webhook injects AZURE_* env and the token file
+    spec:
+      serviceAccountName: entra-controller
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: controller
+          image: ghcr.io/example/entra-controller:dev
+          env:
+            - { name: NAME_PREFIX, value: "iamaas-" }
+            - { name: RUST_LOG, value: "info,entra_controller=debug" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }

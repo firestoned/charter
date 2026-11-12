@@ -1,0 +1,14 @@
+apiVersion: iam.rbc.example/v1alpha1
+kind: IAMClient
+metadata:
+  name: payments-portal
+  namespace: team-payments
+spec:
+  displayName: Payments Portal
+  redirectURIs:
+    - https://payments.apps.example.rbc.com/callback
+  groups: ["APP-Payments-Users", "APP-Payments-Admins"]
+  secretRotation: 90d
+  owners: []          # Entra object IDs of human owners
+  dex:
+    issuerURL: https://dex.team-payments.apps.example.rbc.com
