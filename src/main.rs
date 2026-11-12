@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // `entra-controller crd` prints the CRD YAML for `kubectl apply`.
+    // `charter-api crd` prints the CRD YAML for `kubectl apply`.
     if std::env::args().nth(1).as_deref() == Some("crd") {
         print!("{}", serde_norway::to_string(&crd::IAMClient::crd())?);
         return Ok(());
@@ -29,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(24);
-    tracing::info!(?policy, grace_hours, "starting entra-controller");
+    tracing::info!(?policy, grace_hours, "starting charter-api");
     let ctx = Arc::new(controller::Ctx {
         audit: audit::Auditor::new(client.clone(), graph.client_id.clone()),
         client,

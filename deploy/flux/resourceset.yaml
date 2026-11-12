@@ -1,5 +1,5 @@
 # Admin provisioning path. Platform admins approve a request by creating a
-# ResourceSetInputProvider (one per client) in iamaas-system, which only they
+# ResourceSetInputProvider (one per client) in charter-system, which only they
 # can write. Flux renders the IAMClient plus a per-client Role that lets the
 # owning team edit that one IAMClient's redirectURIs, and nothing else.
 #
@@ -10,9 +10,9 @@ apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata:
   name: iam-clients
-  namespace: iamaas-system
+  namespace: charter-system
 spec:
-  serviceAccountName: iamaas-provisioner
+  serviceAccountName: charter-provisioner
   inputsFrom:
     - apiVersion: fluxcd.controlplane.io/v1
       kind: ResourceSetInputProvider
@@ -74,7 +74,7 @@ apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSetInputProvider
 metadata:
   name: payments-portal
-  namespace: iamaas-system
+  namespace: charter-system
   labels:
     iam.rbc.example/approved: "true"
 spec:
@@ -95,13 +95,13 @@ spec:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: iamaas-provisioner
-  namespace: iamaas-system
+  name: charter-provisioner
+  namespace: charter-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: iamaas-provisioner
+  name: charter-provisioner
 rules:
   - apiGroups: ["iam.rbc.example"]
     resources: ["iamclients"]
@@ -116,12 +116,12 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: iamaas-provisioner
+  name: charter-provisioner
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: iamaas-provisioner
+  name: charter-provisioner
 subjects:
   - kind: ServiceAccount
-    name: iamaas-provisioner
-    namespace: iamaas-system
+    name: charter-provisioner
+    namespace: charter-system

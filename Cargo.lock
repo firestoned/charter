@@ -232,6 +232,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "charter-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "chrono",
+ "futures",
+ "hex",
+ "k8s-openapi",
+ "kube",
+ "reqwest",
+ "schemars",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -438,31 +463,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fba3fe847045ecff794b9c138293a80db914678c453ad63fbf0c6a9eb6e00b22"
 dependencies = [
  "encoding_rs",
-]
-
-[[package]]
-name = "entra-controller"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "chrono",
- "futures",
- "hex",
- "k8s-openapi",
- "kube",
- "reqwest",
- "schemars",
- "secrecy",
- "serde",
- "serde_json",
- "serde_norway",
- "sha2",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]

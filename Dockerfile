@@ -5,5 +5,5 @@ COPY src ./src
 RUN cargo build --release --locked
 
 FROM gcr.io/distroless/cc-debian12:nonroot
-COPY --from=build /src/target/release/entra-controller /entra-controller
-ENTRYPOINT ["/entra-controller"]
+COPY --from=build /src/target/release/charter-api /charter-api
+ENTRYPOINT ["/charter-api"]

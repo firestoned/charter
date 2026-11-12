@@ -34,7 +34,7 @@ impl Policy {
     pub fn from_env() -> Self {
         let get = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
         Self {
-            name_prefix: get("NAME_PREFIX").unwrap_or_else(|| "iamaas-".into()),
+            name_prefix: get("NAME_PREFIX").unwrap_or_else(|| "charter-".into()),
             allowed_redirect_domains: get("ALLOWED_REDIRECT_DOMAINS")
                 .map(|v| {
                     v.split(',')
@@ -225,7 +225,7 @@ mod tests {
 
     fn policy() -> Policy {
         Policy {
-            name_prefix: "iamaas-".into(),
+            name_prefix: "charter-".into(),
             allowed_redirect_domains: vec![".apps.example.com".into()],
             allow_localhost: false,
             max_secret_lifetime: Duration::days(180),

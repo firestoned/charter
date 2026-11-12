@@ -28,9 +28,9 @@ confirmed against RBC's own control library before use.
 
 ```
 Team request -> approval in the change system (requester != approver, CHG ref)
-  -> platform admin adds a ResourceSetInputProvider in iamaas-system
+  -> platform admin adds a ResourceSetInputProvider in charter-system
      (requestedBy, approvedBy, changeRef, owners, ownerGroup, groups, ...)
-  -> Flux ResourceSet, as the iamaas-provisioner SA, renders:
+  -> Flux ResourceSet, as the charter-provisioner SA, renders:
        IAMClient + Role/RoleBinding letting ownerGroup edit that one IAMClient
   -> admission: only admins/provisioner may create; author stamped
   -> controller: policy check -> approval check -> audited Graph calls
@@ -61,7 +61,7 @@ person to Entra change.
 
 ## Audit record
 
-One JSON line per event on the `audit` log target (schema `iamaas.audit/v1`),
+One JSON line per event on the `audit` log target (schema `charter.audit/v1`),
 shipped to the SIEM with immutable retention, and mirrored as a Kubernetes Event.
 
 | Field | Purpose |

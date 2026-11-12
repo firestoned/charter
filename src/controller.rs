@@ -35,7 +35,7 @@ use std::{
 };
 
 const FINALIZER: &str = "iam.rbc.example/entra-cleanup";
-const MANAGER: &str = "entra-controller";
+const MANAGER: &str = "charter-api";
 const ANN_KEY_ID: &str = "iam.rbc.example/key-id";
 const ANN_PREV_KEY_ID: &str = "iam.rbc.example/previous-key-id";
 const ANN_ROTATED_AT: &str = "iam.rbc.example/rotated-at";
@@ -67,7 +67,7 @@ pub async fn run(ctx: Arc<Ctx>) {
     Controller::new(clients, watcher::Config::default())
         .owns(
             secrets,
-            watcher::Config::default().labels("app.kubernetes.io/managed-by=entra-controller"),
+            watcher::Config::default().labels("app.kubernetes.io/managed-by=charter-api"),
         )
         .shutdown_on_signal()
         .run(reconcile, error_policy, ctx)
@@ -243,9 +243,9 @@ async fn apply(o: &IAMClient, ctx: &Ctx) -> Result<Action, Error> {
         "signInAudience": "AzureADMyOrg",
         "web": { "redirectUris": entra_redirects },
         "groupMembershipClaims": group_claims,
-        "tags": ["iamaas", format!("k8s:{ns}/{name}"), format!("spec:{}", &subj.spec_hash[..16])],
+        "tags": ["charter", format!("k8s:{ns}/{name}"), format!("spec:{}", &subj.spec_hash[..16])],
         "notes": format!(
-            "Managed by entra-controller from IAMClient {ns}/{name}. Change {}. Do not edit by hand: changes are reverted and audited.",
+            "Managed by charter-api from IAMClient {ns}/{name}. Change {}. Do not edit by hand: changes are reverted and audited.",
             subj.change_ref.as_deref().unwrap_or("n/a")
         ),
     });
@@ -368,7 +368,7 @@ async fn apply(o: &IAMClient, ctx: &Ctx) -> Result<Action, Error> {
     ) = if needs_secret {
         let pw = au
                 .audited(&oref, &subj, "add_password", json!({ "lifetimeDays": lifetime.num_days(), "reason": if delivered_cred.is_none() { "initial_or_missing" } else { "rotation" } }),
-                    ctx.graph.add_password(&app.id, &format!("iamaas {}", now.format("%Y-%m-%d")), now + lifetime))
+                    ctx.graph.add_password(&app.id, &format!("charter {}", now.format("%Y-%m-%d")), now + lifetime))
                 .await?;
         (
             pw.secret_text,
@@ -750,7 +750,7 @@ mod tests {
         let app = Application {
             id: "o".into(),
             app_id: "a".into(),
-            display_name: Some("iamaas-Pay".into()),
+            display_name: Some("charter-Pay".into()),
             sign_in_audience: Some("AzureADMyOrg".into()),
             group_membership_claims: Some("ApplicationGroup".into()),
             web: Some(crate::graph::Web {
@@ -759,9 +759,9 @@ mod tests {
             password_credentials: vec![],
         };
         let r = vec!["https://a/cb".to_string(), "https://b/cb".to_string()];
-        assert!(diff(&app, "iamaas-Pay", &r, "ApplicationGroup").is_empty());
+        assert!(diff(&app, "charter-Pay", &r, "ApplicationGroup").is_empty());
         assert_eq!(
-            diff(&app, "iamaas-Pay", &r[..1], "None"),
+            diff(&app, "charter-Pay", &r[..1], "None"),
             vec!["groupMembershipClaims", "web.redirectUris"]
         );
     }

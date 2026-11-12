@@ -75,7 +75,7 @@ pub struct Auditor {
 impl Auditor {
     pub fn new(client: kube::Client, actor: String) -> Self {
         let reporter = Reporter {
-            controller: "entra-controller".into(),
+            controller: "charter-api".into(),
             instance: std::env::var("POD_NAME").ok(),
         };
         Self {
@@ -98,7 +98,7 @@ impl Auditor {
             let mut chain = self.chain.lock().await;
             chain.0 += 1;
             let rec = Record {
-                schema: "iamaas.audit/v1",
+                schema: "charter.audit/v1",
                 seq: chain.0,
                 prev_hash: &chain.1,
                 time: Utc::now().to_rfc3339(),

@@ -7,10 +7,10 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: iamclient-policy
-  namespace: iamaas-system
+  namespace: charter-system
 data:
   # Comma-separated Kubernetes usernames allowed to provision (Flux ResourceSet SA).
-  provisioners: "system:serviceaccount:iamaas-system:iamaas-provisioner"
+  provisioners: "system:serviceaccount:charter-system:charter-provisioner"
   # Comma-separated groups of platform admins (Entra group object IDs on AKS).
   adminGroups: "00000000-0000-0000-0000-00000000ad01"
   # Leading dot: host must equal the domain or be a subdomain of it.
@@ -32,7 +32,7 @@ spec:
   matchConditions:
     # The controller only manages its finalizer; status is a separate subresource.
     - name: not-controller
-      expression: "request.userInfo.username != 'system:serviceaccount:iamaas-system:entra-controller'"
+      expression: "request.userInfo.username != 'system:serviceaccount:charter-system:charter-api'"
   variables:
     - name: isAdmin
       expression: >-
@@ -78,7 +78,7 @@ spec:
   validationActions: ["Deny", "Audit"]
   paramRef:
     name: iamclient-policy
-    namespace: iamaas-system
+    namespace: charter-system
     parameterNotFoundAction: Deny
 ---
 # Stamp the real author of every create/update so the controller's audit
@@ -101,7 +101,7 @@ spec:
         resources: ["iamclients"]
   matchConditions:
     - name: not-controller
-      expression: "request.userInfo.username != 'system:serviceaccount:iamaas-system:entra-controller'"
+      expression: "request.userInfo.username != 'system:serviceaccount:charter-system:charter-api'"
   mutations:
     - patchType: ApplyConfiguration
       applyConfiguration:
