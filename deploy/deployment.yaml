@@ -19,7 +19,7 @@ spec:
       containers:
         - name: controller
           # Pin by digest; admission (e.g. Kyverno/Connaisseur) should verify the cosign signature.
-          image: ghcr.io/example/charter-iam@sha256:REPLACE_WITH_SIGNED_DIGEST
+          image: ghcr.io/firestoned/charter@sha256:REPLACE_WITH_SIGNED_DIGEST
           env:
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: NAME_PREFIX, value: "charter-" }

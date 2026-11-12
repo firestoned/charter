@@ -3,6 +3,7 @@ name = "charter-iam"
 version = "0.1.0"
 edition = "2024"
 publish = false
+repository = "https://github.com/firestoned/charter"
 
 [dependencies]
 anyhow = "1.0.104"
