@@ -82,7 +82,8 @@ never appear: they are held in `SecretString` (redacted `Debug`, zeroized on dro
 Actions recorded: `policy_check`, `approval_check`, `create_application`,
 `update_application`, `drift_detected`, `create_service_principal`,
 `add_owner`, `remove_owner`, `add_password`, `deliver_secret`,
-`remove_password`, `delete_application`, `retain_application`, `cleanup`.
+`remove_password`, `apply_push_secret`, `delete_push_secret`,
+`delete_application`, `retain_application`, `cleanup`.
 
 ## Control mapping
 
@@ -98,6 +99,7 @@ Actions recorded: `policy_check`, `approval_check`, `create_application`,
 | Configuration integrity | Drift detection on name, audience, group claims, redirect URIs, owners, secrets | `drift_detected` records | Change management | CM-3, CM-6, SI-7 | Technology operations |
 | Secure redirect configuration | HTTPS only, allowed domain list, no wildcards, no loopback in prod | `policy_check` denials | Change management | SC-23, CM-7 | Cyber security |
 | Audit logging content and protection | Structured records, hash chain, SIEM with immutable retention | SIEM query by `subject.uid` or `change_ref` | IT operations | AU-2, AU-3, AU-9, AU-12 | Cyber security (logging and monitoring) |
+| Secret delivery to the vault | Optional `spec.pushSecret` (admin-only) renders an ESO `PushSecret` to an allow-listed `ClusterSecretStore`; the OpenBao path is fixed per client (`<prefix><namespace>/<name>`); the previous Entra secret is not revoked until the push after a rotation has synced; the OpenBao copy is deleted with the client | `apply_push_secret` / `delete_push_secret` records, `SecretPushed` condition, OpenBao audit device | Logical access | SC-28, IA-5(1) | Cyber security |
 | Deprovisioning | `deletionPolicy: Retain` (default) revokes all secrets and keeps the app as evidence; `Delete` soft-deletes | `remove_password` / `delete_application` records | Logical access | AC-2(3) | Cyber security |
 | Software supply chain integrity | cargo-deny (advisories, licences, sources), SBOM (CycloneDX + BuildKit), cosign keyless signature, SLSA provenance, digest-pinned image | CI run, Rekor entry, attestation | Change management (SDLC) | SR-4, SR-11, SI-7, SA-15 | Technology operations (SDLC) |
 
@@ -105,9 +107,11 @@ Actions recorded: `policy_check`, `approval_check`, `create_application`,
 
 - **Leader election and HA.** Run one active replica with leader election so a
   failover never produces two writers. Required for a tier-0 dependency.
-- **OpenBao sink.** Deliver secrets to OpenBao (KV v2, versioned, with its own
-  audit device) instead of a Kubernetes Secret; split the Dex and Entra secrets.
-  Until then, enable KMS encryption at rest and restrict Secret read RBAC.
+- **OpenBao sink.** Opt-in delivery to OpenBao through an ESO `PushSecret`
+  exists (`spec.pushSecret`), but the Kubernetes Secret is still always written
+  because the PushSecret reads from it. Still open: making OpenBao the only
+  copy, and splitting the Dex and Entra secrets. Until then, enable KMS
+  encryption at rest and restrict Secret read RBAC.
 - **Approval intake.** Today an admin creates the ResourceSetInputProvider by
   hand. Connect it to the change system (e.g. an ExternalService input
   provider backed by the approval API) so approvals are not retyped.
@@ -124,5 +128,7 @@ Actions recorded: `policy_check`, `approval_check`, `create_application`,
   permission IAM should approve separately; not implemented.
 - **Retention periods.** Confirm audit log retention with Records Management.
 - **Threat model and penetration test** before onboarding production teams.
-- **Integration tests** against a non-production tenant, including drift and
-  rotation crash-recovery scenarios.
+- **Automated integration tests.** The end-to-end scenarios in the developer
+  guide have been run by hand against a non-production tenant (create, drift,
+  approval gate, rotation, OpenBao delivery, deletion). Still open: running
+  them in CI, and rotation crash-recovery scenarios.

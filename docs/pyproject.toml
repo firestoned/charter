@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "charter-docs"
+version = "0.1.0"
+description = "Documentation dependencies for Charter (charter-iam)"
+authors = ["Erick Bourgeois <erick@jeb.ca>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.10"
+
+# Pin to MkDocs 1.x: 2.0 breaks Material and plugins.
+# See https://squidfunk.github.io/mkdocs-material/blog/2026/02/18/mkdocs-2.0/
+mkdocs = ">=1.6.0,<2.0"
+mkdocs-material = "^9.5.0"
+mkdocs-git-revision-date-localized-plugin = "^1.2.4"
+pymdown-extensions = ">=11.0.1,<13.0.0"
+# Used by hooks/crd_reference.py to read deploy/crd.yaml (also an MkDocs dependency).
+pyyaml = "^6.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
