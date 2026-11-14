@@ -21,3 +21,5 @@ spec:
   deletionPolicy: Retain                                # admin-only
   dex:                                                  # admin-only
     issuerURL: https://dex.team-payments.apps.example.rbc.com
+  pushSecret:                                           # admin-only, optional
+    clusterSecretStore: openbao                         # -> OpenBao charter/team-payments/payments-portal

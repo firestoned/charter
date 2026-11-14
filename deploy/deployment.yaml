@@ -27,6 +27,12 @@ spec:
             - { name: MAX_SECRET_LIFETIME_DAYS, value: "180" }
             - { name: ROTATION_GRACE_HOURS, value: "24" }
             - { name: REQUIRE_APPROVAL, value: "true" }
+            # Optional OpenBao delivery through an ESO PushSecret (spec.pushSecret).
+            # Empty ALLOWED_PUSH_SECRET_STORES refuses every push request.
+            - { name: ALLOWED_PUSH_SECRET_STORES, value: "openbao" }
+            - { name: DEFAULT_PUSH_SECRET_STORE, value: "openbao" }
+            - { name: PUSH_SECRET_PATH_PREFIX, value: "charter/" }
+            - { name: PUSH_SECRET_REFRESH_INTERVAL, value: "1m" }
             - { name: RUST_LOG, value: "info,audit=info" }
           securityContext:
             allowPrivilegeEscalation: false

@@ -9,7 +9,7 @@ the Dex config that fronts it. Part of the IAM-as-a-Service proposal.
 
 Built audit- and compliance-first for a tier 1 bank: nothing changes in Entra
 without a policy check and a verified approval, and every change is audited.
-See [docs/compliance.md](docs/compliance.md) for the control mapping.
+See [docs/src/security/compliance.md](docs/src/security/compliance.md) for the control mapping.
 
 Status: scaffold. It compiles, unit tests pass, and the Graph calls follow the
 v1.0 API, but it has not run against a real tenant yet.
@@ -43,6 +43,7 @@ IAMClient (created by admins via Flux ResourceSet; owners edit redirectURIs via 
    ├─ 4. service principal; owners = spec.owners + controller (extras removed)
    ├─ 5. client secret: new at 1/3 lifetime left, deliver, then revoke stale and unknown secrets
    ├─ 6. Secret <name>-entra: tenant-id, client-id, client-secret, issuer, dex-config.yaml
+   │     optional: PushSecret <name>-entra -> OpenBao <prefix><ns>/<name> (spec.pushSecret)
    └─ 7. status: appId, servicePrincipalId, secret key/expiry, appliedSpecHash, approvedBy, changeRef
 every Entra mutation: audit "attempted" -> call -> "succeeded"/"failed" (JSON + Kubernetes Event)
 ```
@@ -70,16 +71,36 @@ Decisions worth knowing:
 - **Crash-safe rotation.** The delivered key ID lives on the Secret; any Entra
   password that is not the delivered one (or the previous one inside the grace
   window) is revoked, which also removes hand-added secrets.
+- **Automatic rotation.** Each secret lives `spec.secretRotation` (default
+  `90d`); a new one is issued when a third of that is left, and the controller
+  wakes at least hourly to check. When an admin shortens `secretRotation`, a
+  secret that would outlive the new lifetime is replaced at once
+  (`lifetime_shortened`). Graph is eventually consistent, so a key delivered in
+  the last 10 minutes that Graph does not list yet is treated as replication
+  lag, not as a missing secret: nothing is minted or revoked until it shows up.
 - **Dex in front.** With `spec.dex.issuerURL` set, Entra only sees
   `<issuer>/callback`; the team's redirect URIs go into the Dex static client.
+- **Kubernetes Secret by default, OpenBao on request.** Credentials always land
+  in `<name>-entra`. With `spec.pushSecret` (admin-only) the controller also
+  renders an External Secrets Operator `PushSecret` that copies them to an
+  allow-listed `ClusterSecretStore` at a path the team cannot choose
+  (`charter/<namespace>/<name>`). After a rotation, the old Entra secret is kept
+  until the push has synced, so OpenBao readers never hold a revoked secret.
+  Status shows it in the `SecretPushed` condition and `status.pushedTo`.
 - **Retain by default on delete.** Secrets are revoked, the registration stays
   as evidence. `deletionPolicy: Delete` soft-deletes it (30 days in Entra).
 
 ## Not done yet
 
-See "Open items before production" in [docs/compliance.md](docs/compliance.md):
-leader election, OpenBao sink, the approval stamping job, Entra audit log
+See "Open items before production" in [docs/src/security/compliance.md](docs/src/security/compliance.md):
+leader election, OpenBao as the only secret copy, the approval stamping job, Entra audit log
 reconciliation, egress restriction, group assignment, integration tests.
+
+## Documentation
+
+Full documentation: <https://firestoned.github.io/charter/> (sources in
+[docs/src](docs/src)). Build it locally with `make docs`, or preview with
+`make docs-serve`.
 
 ## Run
 

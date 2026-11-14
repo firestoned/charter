@@ -51,6 +51,22 @@ pub struct IAMClientSpec {
     /// Optional Dex front door for this client.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dex: Option<DexSpec>,
+    /// Optional: also push the delivered Secret to OpenBao through an External
+    /// Secrets Operator `PushSecret`. Admin-only. The Kubernetes Secret is always
+    /// written; the PushSecret reads from it. The OpenBao path is fixed by the
+    /// controller (`<prefix><namespace>/<name>`), not by the team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push_secret: Option<PushSecretSpec>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PushSecretSpec {
+    /// `ClusterSecretStore` to push to. Must be on the controller's allow-list;
+    /// omitted means the controller's default store. Namespaced `SecretStore`s
+    /// are not accepted: the team could repoint one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster_secret_store: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
@@ -88,13 +104,21 @@ pub struct IAMClientStatus {
     pub secret_expires_at: Option<String>,
     /// Kubernetes Secret holding the credentials and Dex config.
     pub secret_name: Option<String>,
+    /// `PushSecret` that copies `secretName` to OpenBao, when `spec.pushSecret` is set.
+    pub push_secret_name: Option<String>,
+    /// `<clusterSecretStore>:<remoteKey>` the credentials are pushed to.
+    pub pushed_to: Option<String>,
+    /// `metadata.generation` this status was computed from.
     pub observed_generation: Option<i64>,
     /// Evidence of the approval the last applied spec was reconciled under.
     pub applied_spec_hash: Option<String>,
     /// Hash of the admin-only fields last applied; a mismatch needs a new approval.
     pub applied_admin_hash: Option<String>,
+    /// Approver recorded when the current admin-only state was applied.
     pub approved_by: Option<String>,
+    /// Change reference the current admin-only state was applied under.
     pub change_ref: Option<String>,
+    /// `Ready`, plus `SecretPushed` when `spec.pushSecret` is set.
     #[serde(default)]
     pub conditions: Vec<Condition>,
 }
@@ -103,11 +127,17 @@ pub struct IAMClientStatus {
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Condition {
+    /// `Ready` or `SecretPushed`.
     #[serde(rename = "type")]
     pub type_: String,
+    /// `True` or `False`.
     pub status: String,
+    /// Machine-readable reason, e.g. `Reconciled`, `PendingApproval`, `PolicyViolation`.
     pub reason: String,
+    /// Human-readable detail, truncated to 1000 characters.
     pub message: String,
+    /// RFC 3339 time the condition last changed status.
     pub last_transition_time: String,
+    /// `metadata.generation` the condition was computed from.
     pub observed_generation: Option<i64>,
 }

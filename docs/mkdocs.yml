@@ -1,0 +1,183 @@
+# Charter documentation: MkDocs Material configuration.
+# Build with `make docs` from the repo root, or `poetry run mkdocs build` here.
+
+site_name: Charter
+site_url: https://firestoned.github.io/charter/
+site_description: >-
+  Charter (charter-iam) is a Kubernetes controller that turns an IAMClient
+  custom resource into an Entra ID app registration, its service principal, a
+  rotated client secret and the Dex config in front of it, with policy checks,
+  approvals and an audit record for every change.
+site_author: Erick Bourgeois
+
+repo_url: https://github.com/firestoned/charter
+repo_name: firestoned/charter
+edit_uri: edit/main/docs/src/
+
+docs_dir: src
+site_dir: site
+
+# Fail the build on any warning: broken links, missing nav targets.
+strict: true
+
+copyright: Copyright &copy; 2026 Erick Bourgeois
+
+theme:
+  name: material
+  language: en
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.indexes
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+
+# Generates the IAMClient field tables from deploy/crd.yaml at build time, so
+# the reference cannot drift from the CRD (which CI keeps in sync with code).
+hooks:
+  - hooks/crd_reference.py
+
+plugins:
+  - search:
+      lang: en
+      separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: timeago
+      fallback_to_build_date: true
+      enable_git_follow: false
+      # Do not fail strict builds for pages that are not committed yet.
+      strict: false
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      permalink_title: Anchor link to this section
+      toc_depth: 3
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.snippets:
+      base_path: [".."]
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_div_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - https://unpkg.com/mermaid@11.12.2/dist/mermaid.min.js
+  - javascripts/mermaid-init.js
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/firestoned/charter
+      name: Charter on GitHub
+  generator: true
+
+nav:
+  - Home:
+      - index.md
+      - Why Charter: why.md
+  - Getting Started:
+      - getting-started/index.md
+      - Prerequisites: getting-started/prerequisites.md
+      - Bootstrap the Entra identity: getting-started/entra-bootstrap.md
+      - 'Quickstart: local cluster and dev tenant': getting-started/quickstart.md
+      - Production install: getting-started/production-install.md
+  - Concepts:
+      - concepts/index.md
+      - Architecture: concepts/architecture.md
+      - The reconcile loop: concepts/reconcile-loop.md
+      - Approvals and change kinds: concepts/approval-model.md
+      - Secret lifecycle and rotation: concepts/secret-lifecycle.md
+      - Drift detection: concepts/drift.md
+      - Dex in front of Entra: concepts/dex.md
+  - Guides:
+      - guides/index.md
+      - Provisioning a client: guides/provisioning.md
+      - 'Owners: editing redirect URIs': guides/owner-self-service.md
+      - Consuming the credentials: guides/consuming-credentials.md
+      - Delivering to OpenBao: guides/openbao.md
+      - Rotating secrets: guides/rotation.md
+      - Changing and deleting a client: guides/change-and-delete.md
+      - Troubleshooting: guides/troubleshooting.md
+  - Reference:
+      - reference/index.md
+      - IAMClient API: reference/iamclient.md
+      - Status and conditions: reference/status.md
+      - Controller configuration: reference/configuration.md
+      - Annotations and labels: reference/annotations.md
+      - Audit records: reference/audit.md
+      - Microsoft Graph usage: reference/graph.md
+      - RBAC and admission: reference/rbac.md
+  - Security and Compliance:
+      - security/index.md
+      - Threat model: security/threat-model.md
+      - Compliance and control mapping: security/compliance.md
+  - Developer:
+      - developer/index.md
+      - Code layout: developer/code-layout.md
+      - Building and testing: developer/building.md
+      - End-to-end testing: developer/e2e.md
+      - Writing these docs: developer/docs.md
