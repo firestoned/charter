@@ -53,7 +53,8 @@ spec:
           object.spec.?groups == oldObject.spec.?groups &&
           object.spec.?secretRotation == oldObject.spec.?secretRotation &&
           object.spec.?deletionPolicy == oldObject.spec.?deletionPolicy &&
-          object.spec.?dex == oldObject.spec.?dex)
+          object.spec.?dex == oldObject.spec.?dex &&
+          object.spec.?pushSecret == oldObject.spec.?pushSecret)
       message: "owners may only change spec.redirectURIs; other fields need a platform admin"
       reason: Forbidden
     - expression: >-

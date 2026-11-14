@@ -69,6 +69,22 @@ spec:
                 items:
                   type: string
                 type: array
+              pushSecret:
+                description: |-
+                  Optional: also push the delivered Secret to OpenBao through an External
+                  Secrets Operator `PushSecret`. Admin-only. The Kubernetes Secret is always
+                  written; the PushSecret reads from it. The OpenBao path is fixed by the
+                  controller (`<prefix><namespace>/<name>`), not by the team.
+                nullable: true
+                properties:
+                  clusterSecretStore:
+                    description: |-
+                      `ClusterSecretStore` to push to. Must be on the controller's allow-list;
+                      omitted means the controller's default store. Namespaced `SecretStore`s
+                      are not accepted: the team could repoint one.
+                    nullable: true
+                    type: string
+                type: object
               redirectURIs:
                 default: []
                 description: |-
@@ -103,29 +119,38 @@ spec:
                 nullable: true
                 type: string
               approvedBy:
+                description: Approver recorded when the current admin-only state was applied.
                 nullable: true
                 type: string
               changeRef:
+                description: Change reference the current admin-only state was applied under.
                 nullable: true
                 type: string
               conditions:
                 default: []
+                description: '`Ready`, plus `SecretPushed` when `spec.pushSecret` is set.'
                 items:
                   description: Same shape as metav1.Condition, kept local so the schema derives cleanly.
                   properties:
                     lastTransitionTime:
+                      description: RFC 3339 time the condition last changed status.
                       type: string
                     message:
+                      description: Human-readable detail, truncated to 1000 characters.
                       type: string
                     observedGeneration:
+                      description: '`metadata.generation` the condition was computed from.'
                       format: int64
                       nullable: true
                       type: integer
                     reason:
+                      description: Machine-readable reason, e.g. `Reconciled`, `PendingApproval`, `PolicyViolation`.
                       type: string
                     status:
+                      description: '`True` or `False`.'
                       type: string
                     type:
+                      description: '`Ready` or `SecretPushed`.'
                       type: string
                   required:
                   - lastTransitionTime
@@ -140,9 +165,18 @@ spec:
                 nullable: true
                 type: string
               observedGeneration:
+                description: '`metadata.generation` this status was computed from.'
                 format: int64
                 nullable: true
                 type: integer
+              pushSecretName:
+                description: '`PushSecret` that copies `secretName` to OpenBao, when `spec.pushSecret` is set.'
+                nullable: true
+                type: string
+              pushedTo:
+                description: '`<clusterSecretStore>:<remoteKey>` the credentials are pushed to.'
+                nullable: true
+                type: string
               secretExpiresAt:
                 description: RFC 3339 expiry of the current client secret.
                 nullable: true

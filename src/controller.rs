@@ -11,6 +11,7 @@ use crate::audit::{Auditor, Outcome, Subject};
 use crate::crd::{Condition, DeletionPolicy, IAMClient, IAMClientStatus};
 use crate::graph::{Application, Graph, GraphError};
 use crate::policy::{Approval, ChangeKind, Policy, admin_hash, classify, gate, spec_hash};
+use crate::push::{self, SyncState};
 use base64::Engine;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::StreamExt;
@@ -18,7 +19,7 @@ use k8s_openapi::ByteString;
 use k8s_openapi::api::core::v1::Secret;
 use kube::{
     Api, Client, Resource, ResourceExt,
-    api::{ObjectMeta, Patch, PatchParams},
+    api::{DeleteParams, DynamicObject, ObjectMeta, Patch, PatchParams},
     runtime::{
         Controller,
         controller::Action,
@@ -39,6 +40,9 @@ const MANAGER: &str = "charter-iam";
 const ANN_KEY_ID: &str = "iam.rbc.example/key-id";
 const ANN_PREV_KEY_ID: &str = "iam.rbc.example/previous-key-id";
 const ANN_ROTATED_AT: &str = "iam.rbc.example/rotated-at";
+/// How long after a delivery a missing key is treated as replication lag
+/// rather than as a secret deleted out of band.
+const STALE_READ_WINDOW: ChronoDuration = ChronoDuration::minutes(10);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -149,6 +153,11 @@ fn check_policy(o: &IAMClient, p: &Policy) -> Result<ChronoDuration, Vec<String>
         && let Err(e) = p.check_redirect(&d.issuer_url)
     {
         v.push(format!("dex issuer: {e}"));
+    }
+    if let Some(ps) = &o.spec.push_secret
+        && let Err(e) = p.resolve_push_store(ps.cluster_secret_store.as_deref())
+    {
+        v.push(format!("pushSecret: {e}"));
     }
     if v.is_empty() { Ok(lifetime) } else { Err(v) }
 }
@@ -353,11 +362,33 @@ async fn apply(o: &IAMClient, ctx: &Ctx) -> Result<Action, Error> {
         .as_ref()
         .and_then(|k| app.password_credentials.iter().find(|p| &p.key_id == k));
     let now = Utc::now();
-    let rotate_due = delivered_cred
-        .and_then(|c| c.end_date_time)
-        .is_none_or(|end| now >= end - lifetime / 3);
-    let needs_secret =
-        delivered_cred.is_none() || !data.contains_key("client-secret") || rotate_due;
+    // Graph is eventually consistent: a reconcile right after a rotation can
+    // read a password list that does not show the key just delivered. Acting
+    // on that read would mint a second secret and revoke the one consumers
+    // hold. If the Secret says we delivered a key recently and Graph does not
+    // list it yet, change nothing and look again shortly.
+    let delivered_recently = ann
+        .get(ANN_ROTATED_AT)
+        .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
+        .is_some_and(|t| now - t.with_timezone(&Utc) < STALE_READ_WINDOW);
+    if delivered_key.is_some()
+        && delivered_cred.is_none()
+        && data.contains_key("client-secret")
+        && delivered_recently
+    {
+        tracing::info!(
+            ns = %ns, name = %name, key_id = ?delivered_key,
+            "delivered key not visible in Graph yet; waiting for replication"
+        );
+        return Ok(Action::requeue(Duration::from_secs(15)));
+    }
+    let rotation = rotation_reason(
+        delivered_cred.map(|c| c.end_date_time),
+        data.contains_key("client-secret"),
+        now,
+        lifetime,
+    );
+    let needs_secret = rotation.is_some();
 
     let (client_secret, key_id, expires_at, prev_key, rotated_at): (
         SecretString,
@@ -367,9 +398,18 @@ async fn apply(o: &IAMClient, ctx: &Ctx) -> Result<Action, Error> {
         String,
     ) = if needs_secret {
         let pw = au
-                .audited(&oref, &subj, "add_password", json!({ "lifetimeDays": lifetime.num_days(), "reason": if delivered_cred.is_none() { "initial_or_missing" } else { "rotation" } }),
-                    ctx.graph.add_password(&app.id, &format!("charter {}", now.format("%Y-%m-%d")), now + lifetime))
-                .await?;
+            .audited(
+                &oref,
+                &subj,
+                "add_password",
+                json!({ "lifetime": spec.secret_rotation, "reason": rotation }),
+                ctx.graph.add_password(
+                    &app.id,
+                    &format!("charter {}", now.format("%Y-%m-%d")),
+                    now + lifetime,
+                ),
+            )
+            .await?;
         (
             pw.secret_text,
             pw.key_id,
@@ -422,6 +462,7 @@ async fn apply(o: &IAMClient, ctx: &Ctx) -> Result<Action, Error> {
             ),
         );
     }
+    let pushed_keys: Vec<String> = out.keys().cloned().collect();
     let mut annotations = BTreeMap::from([
         (ANN_KEY_ID.to_string(), key_id.clone()),
         (ANN_ROTATED_AT.to_string(), rotated_at.clone()),
@@ -465,12 +506,27 @@ async fn apply(o: &IAMClient, ctx: &Ctx) -> Result<Action, Error> {
         deliver.await?;
     }
 
+    // 7b. Optional copy to OpenBao through an ESO PushSecret.
+    let rotated_at_t = DateTime::parse_from_rfc3339(&rotated_at)
+        .map(|t| t.with_timezone(&Utc))
+        .unwrap_or(DateTime::<Utc>::UNIX_EPOCH);
+    let push = reconcile_push(
+        o,
+        ctx,
+        &subj,
+        &oref,
+        &secret_name,
+        &pushed_keys,
+        rotated_at_t,
+    )
+    .await?;
+    let push_synced = push.as_ref().is_none_or(|p| p.state == SyncState::Synced);
+
     // 8. Revoke every password that is not the delivered one, except the previous
-    //    one during its grace period. Catches hand-added secrets too.
-    let in_grace = DateTime::parse_from_rfc3339(&rotated_at)
-        .map(|t| now < t.with_timezone(&Utc) + ctx.rotation_grace)
-        .unwrap_or(false);
-    let keep_prev = prev_key.filter(|_| in_grace);
+    //    one during its grace period, or until OpenBao holds its replacement.
+    //    Catches hand-added secrets too.
+    let in_grace = now < rotated_at_t + ctx.rotation_grace;
+    let keep_prev = prev_key.filter(|_| in_grace || !push_synced);
     for cred in &app.password_credentials {
         if cred.key_id == key_id || Some(&cred.key_id) == keep_prev.as_ref() {
             continue;
@@ -500,6 +556,8 @@ async fn apply(o: &IAMClient, ctx: &Ctx) -> Result<Action, Error> {
         secret_key_id: Some(key_id),
         secret_expires_at: Some(expires_at.to_rfc3339()),
         secret_name: Some(secret_name),
+        push_secret_name: push.as_ref().map(|p| p.name.clone()),
+        pushed_to: push.as_ref().map(|p| p.pushed_to.clone()),
         observed_generation: o.meta().generation,
         applied_spec_hash: Some(subj.spec_hash.clone()),
         applied_admin_hash: Some(subj.admin_hash.clone()),
@@ -514,15 +572,52 @@ async fn apply(o: &IAMClient, ctx: &Ctx) -> Result<Action, Error> {
         } else {
             subj.change_ref.clone()
         },
-        conditions: vec![condition(
-            &status,
-            o,
-            "True",
-            "Reconciled",
-            "Entra registration matches the approved spec",
-        )],
+        conditions: {
+            let mut c = vec![match push.as_ref().map(|p| &p.state) {
+                Some(SyncState::Failed(why)) => condition(
+                    &status,
+                    o,
+                    "Ready",
+                    "False",
+                    "PushSecretFailed",
+                    &format!("Entra is reconciled but the push to OpenBao failed: {why}"),
+                ),
+                _ => condition(
+                    &status,
+                    o,
+                    "Ready",
+                    "True",
+                    "Reconciled",
+                    "Entra registration matches the approved spec",
+                ),
+            }];
+            if let Some(p) = &push {
+                c.push(match &p.state {
+                    SyncState::Synced => condition(
+                        &status,
+                        o,
+                        "SecretPushed",
+                        "True",
+                        "Synced",
+                        &format!("credentials pushed to {}", p.pushed_to),
+                    ),
+                    SyncState::Pending(why) => {
+                        condition(&status, o, "SecretPushed", "False", "Pending", why)
+                    }
+                    SyncState::Failed(why) => {
+                        condition(&status, o, "SecretPushed", "False", "Failed", why)
+                    }
+                });
+            }
+            c
+        },
     };
     patch_status(o, ctx, &new_status).await?;
+
+    // A pending push holds back revocation of the previous secret; look again soon.
+    if !push_synced {
+        return Ok(Action::requeue(Duration::from_secs(30)));
+    }
 
     // Wake for the next rotation or grace expiry, and at least hourly to catch drift.
     let next_rotation = (expires_at - lifetime / 3 - Utc::now())
@@ -537,6 +632,14 @@ async fn cleanup(o: &IAMClient, ctx: &Ctx) -> Result<Action, Error> {
     let subj = subject(o, ctx);
     let oref = o.object_ref(&());
     let au = &ctx.audit;
+    // Garbage collection would remove an owned PushSecret too, but only after
+    // the finalizer; delete it here so the OpenBao copy goes in the audit trail.
+    if o.status
+        .as_ref()
+        .is_some_and(|s| s.push_secret_name.is_some())
+    {
+        delete_push_secret(o, ctx, &subj, &oref, "iamclient_deleted").await?;
+    }
     let Some(app) = ctx.graph.get_application(&subj.unique_name).await? else {
         au.record(
             &oref,
@@ -586,6 +689,159 @@ async fn cleanup(o: &IAMClient, ctx: &Ctx) -> Result<Action, Error> {
     Ok(Action::await_change())
 }
 
+/// What happened to the OpenBao copy on this reconcile.
+struct PushOutcome {
+    name: String,
+    pushed_to: String,
+    state: SyncState,
+}
+
+fn push_api(ctx: &Ctx, ns: &str) -> Api<DynamicObject> {
+    Api::namespaced_with(ctx.client.clone(), ns, &push::api_resource())
+}
+
+/// A missing PushSecret CRD answers 404, like a missing object.
+fn is_not_found(e: &kube::Error) -> bool {
+    matches!(e, kube::Error::Api(s) if s.code == 404)
+}
+
+/// Create or update the PushSecret for `spec.pushSecret`, or remove a stale
+/// one when the field is gone. Applies (and audits) only when the rendered
+/// spec changed.
+async fn reconcile_push(
+    o: &IAMClient,
+    ctx: &Ctx,
+    subj: &Subject,
+    oref: &k8s_openapi::api::core::v1::ObjectReference,
+    secret_name: &str,
+    keys: &[String],
+    since: DateTime<Utc>,
+) -> Result<Option<PushOutcome>, Error> {
+    let Some(req) = &o.spec.push_secret else {
+        let had_one = o
+            .status
+            .as_ref()
+            .is_some_and(|s| s.push_secret_name.is_some());
+        if had_one {
+            delete_push_secret(o, ctx, subj, oref, "push_secret_removed_from_spec").await?;
+        }
+        return Ok(None);
+    };
+    let ns = o.namespace().unwrap_or_default();
+    let api = push_api(ctx, &ns);
+    // Policy was checked before any Entra change; this cannot fail here.
+    let store = ctx
+        .policy
+        .resolve_push_store(req.cluster_secret_store.as_deref())
+        .map_err(Error::Invalid)?;
+    let remote_key = ctx.policy.push_remote_key(&ns, &o.name_any());
+    let pushed_to = format!("{store}:{remote_key}");
+    let name = secret_name.to_string();
+    let spec = push::spec(
+        &store,
+        secret_name,
+        &remote_key,
+        keys,
+        &ctx.policy.push_refresh_interval,
+    );
+    let hash = push::spec_hash(&spec);
+    let existing = api.get_opt(&name).await?;
+    let current = existing
+        .as_ref()
+        .and_then(|e| e.annotations().get(push::ANN_SPEC_HASH))
+        == Some(&hash);
+    let obj = match existing {
+        Some(e) if current => e,
+        _ => {
+            let mut d = DynamicObject::new(&name, &push::api_resource()).within(&ns);
+            d.metadata.labels = Some(BTreeMap::from([(
+                "app.kubernetes.io/managed-by".to_string(),
+                MANAGER.to_string(),
+            )]));
+            d.metadata.annotations = Some(BTreeMap::from([(
+                push::ANN_SPEC_HASH.to_string(),
+                hash.clone(),
+            )]));
+            d.metadata.owner_references = Some(vec![
+                o.controller_owner_ref(&())
+                    .expect("IAMClient has a name and uid"),
+            ]);
+            d.data = json!({ "spec": spec });
+            let applied = ctx
+                .audit
+                .audited(
+                    oref,
+                    subj,
+                    "apply_push_secret",
+                    json!({ "pushSecret": name, "store": store, "remoteKey": remote_key, "keys": keys }),
+                    api.patch(&name, &PatchParams::apply(MANAGER).force(), &Patch::Apply(&d)),
+                )
+                .await;
+            match applied {
+                Ok(o) => o,
+                Err(e) if is_not_found(&e) => {
+                    return Ok(Some(PushOutcome {
+                        name,
+                        pushed_to,
+                        state: SyncState::Failed(format!(
+                            "{}/{} {} is not installed in this cluster",
+                            push::GROUP,
+                            push::VERSION,
+                            push::KIND
+                        )),
+                    }));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+    };
+    Ok(Some(PushOutcome {
+        name,
+        pushed_to,
+        state: push::synced_since(&obj, since),
+    }))
+}
+
+/// Delete this client's PushSecret if there is one. ESO then deletes the
+/// OpenBao copy (`deletionPolicy: Delete`).
+async fn delete_push_secret(
+    o: &IAMClient,
+    ctx: &Ctx,
+    subj: &Subject,
+    oref: &k8s_openapi::api::core::v1::ObjectReference,
+    reason: &str,
+) -> Result<(), Error> {
+    let ns = o.namespace().unwrap_or_default();
+    let name = format!("{}-entra", o.name_any());
+    let api = push_api(ctx, &ns);
+    let Some(existing) = api.get_opt(&name).await? else {
+        return Ok(());
+    };
+    // Only ever delete a PushSecret this IAMClient owns.
+    let owned = existing
+        .owner_references()
+        .iter()
+        .any(|r| Some(&r.uid) == o.uid().as_ref());
+    if !owned {
+        return Ok(());
+    }
+    let res = ctx
+        .audit
+        .audited(
+            oref,
+            subj,
+            "delete_push_secret",
+            json!({ "pushSecret": name, "reason": reason }),
+            api.delete(&name, &DeleteParams::default()),
+        )
+        .await;
+    match res {
+        Ok(_) => Ok(()),
+        Err(e) if is_not_found(&e) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Fields that differ between Entra and the desired state.
 fn diff(
     cur: &Application,
@@ -627,7 +883,7 @@ async fn set_not_ready(
 ) -> Result<(), Error> {
     let mut s = prev.clone();
     s.observed_generation = o.meta().generation;
-    s.conditions = vec![condition(prev, o, "False", reason, msg)];
+    s.conditions = vec![condition(prev, o, "Ready", "False", reason, msg)];
     patch_status(o, ctx, &s).await
 }
 
@@ -646,6 +902,7 @@ async fn patch_status(o: &IAMClient, ctx: &Ctx, s: &IAMClientStatus) -> Result<(
 fn condition(
     prev: &IAMClientStatus,
     o: &IAMClient,
+    type_: &str,
     status: &str,
     reason: &str,
     message: &str,
@@ -654,17 +911,48 @@ fn condition(
     let since = prev
         .conditions
         .iter()
-        .find(|c| c.type_ == "Ready" && c.status == status)
+        .find(|c| c.type_ == type_ && c.status == status)
         .map(|c| c.last_transition_time.clone())
         .unwrap_or_else(|| Utc::now().to_rfc3339());
     Condition {
-        type_: "Ready".into(),
+        type_: type_.into(),
         status: status.into(),
         reason: reason.into(),
         message: message.chars().take(1000).collect(),
         last_transition_time: since,
         observed_generation: o.meta().generation,
     }
+}
+
+/// Why the delivered secret must be replaced now, or `None` to keep it.
+///
+/// `delivered` is the delivered credential's expiry as Entra reports it
+/// (`None`: no delivered credential found). Rotation starts when a third of
+/// the lifetime remains. A secret that outlives the approved lifetime (an admin
+/// shortened `secretRotation`) is replaced at once rather than left to run.
+fn rotation_reason(
+    delivered: Option<Option<DateTime<Utc>>>,
+    has_secret_data: bool,
+    now: DateTime<Utc>,
+    lifetime: ChronoDuration,
+) -> Option<&'static str> {
+    let Some(end) = delivered else {
+        return Some("initial_or_missing");
+    };
+    if !has_secret_data {
+        return Some("initial_or_missing");
+    }
+    let Some(end) = end else {
+        return Some("rotation");
+    };
+    // Entra rounds end dates; allow a few minutes before calling it too long.
+    if end > now + lifetime + ChronoDuration::minutes(5) {
+        return Some("lifetime_shortened");
+    }
+    if now >= end - lifetime / 3 {
+        return Some("rotation");
+    }
+    None
 }
 
 /// `90d`, `720h`, `30m`.
@@ -743,6 +1031,40 @@ mod tests {
         assert!(parse_duration("3y").is_err());
         assert!(parse_duration("").is_err());
         assert!(parse_duration("1000d").is_err());
+    }
+
+    #[test]
+    fn rotation() {
+        let now = Utc::now();
+        let d90 = ChronoDuration::days(90);
+        let at = |days: i64| Some(Some(now + ChronoDuration::days(days)));
+        assert_eq!(
+            rotation_reason(None, true, now, d90),
+            Some("initial_or_missing")
+        );
+        assert_eq!(
+            rotation_reason(at(80), false, now, d90),
+            Some("initial_or_missing")
+        );
+        assert_eq!(
+            rotation_reason(Some(None), true, now, d90),
+            Some("rotation")
+        );
+        // Fresh secret: keep it.
+        assert_eq!(rotation_reason(at(90), true, now, d90), None);
+        assert_eq!(rotation_reason(at(31), true, now, d90), None);
+        // A third of the lifetime (30d) left: rotate.
+        assert_eq!(rotation_reason(at(30), true, now, d90), Some("rotation"));
+        assert_eq!(rotation_reason(at(-1), true, now, d90), Some("rotation"));
+        // Approved lifetime shortened from 90d to 3h: replace the 90d secret now.
+        let h3 = ChronoDuration::hours(3);
+        assert_eq!(
+            rotation_reason(at(89), true, now, h3),
+            Some("lifetime_shortened")
+        );
+        // A secret issued just now under 3h is not "too long".
+        let fresh = Some(Some(now + h3 + ChronoDuration::seconds(30)));
+        assert_eq!(rotation_reason(fresh, true, now, h3), None);
     }
 
     #[test]

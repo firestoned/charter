@@ -3,6 +3,7 @@ mod controller;
 mod crd;
 mod graph;
 mod policy;
+mod push;
 
 use kube::CustomResourceExt;
 use std::sync::Arc;

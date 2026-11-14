@@ -38,6 +38,10 @@ spec:
       deletionPolicy: << inputs.deletionPolicy | default "Retain" >>
       dex:
         issuerURL: << inputs.dexIssuerURL | quote >>
+      << if inputs.pushSecretStore >>
+      pushSecret:
+        clusterSecretStore: << inputs.pushSecretStore | quote >>
+      << end >>
     ---
     apiVersion: rbac.authorization.k8s.io/v1
     kind: Role
@@ -91,6 +95,7 @@ spec:
     groups: ["APP-Payments-Users", "APP-Payments-Admins"]
     secretRotation: 90d
     dexIssuerURL: https://dex.team-payments.apps.example.rbc.com
+    pushSecretStore: openbao   # optional: also copy the credentials to OpenBao
 ---
 apiVersion: v1
 kind: ServiceAccount

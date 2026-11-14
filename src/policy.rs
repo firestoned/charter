@@ -28,6 +28,14 @@ pub struct Policy {
     pub max_secret_lifetime: Duration,
     /// Require a valid approval stamp before touching Entra.
     pub require_approval: bool,
+    /// `ClusterSecretStore`s an IAMClient may push to. Empty: pushing is refused.
+    pub allowed_push_stores: Vec<String>,
+    /// Store used when `spec.pushSecret.clusterSecretStore` is omitted.
+    pub default_push_store: Option<String>,
+    /// OpenBao path prefix; the remote key is `<prefix><namespace>/<name>`.
+    pub push_path_prefix: String,
+    /// `PushSecret.spec.refreshInterval`; bounds how long a rotation takes to reach OpenBao.
+    pub push_refresh_interval: String,
 }
 
 impl Policy {
@@ -51,6 +59,18 @@ impl Policy {
             ),
             // Fail closed: approval is required unless explicitly disabled (dev only).
             require_approval: get("REQUIRE_APPROVAL").as_deref() != Some("false"),
+            allowed_push_stores: get("ALLOWED_PUSH_SECRET_STORES")
+                .map(|v| {
+                    v.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            default_push_store: get("DEFAULT_PUSH_SECRET_STORE"),
+            push_path_prefix: get("PUSH_SECRET_PATH_PREFIX").unwrap_or_else(|| "charter/".into()),
+            push_refresh_interval: get("PUSH_SECRET_REFRESH_INTERVAL")
+                .unwrap_or_else(|| "1m".into()),
         }
     }
 
@@ -88,6 +108,27 @@ impl Policy {
                 "redirect host {host_only} is not in the allowed domains"
             ))
         }
+    }
+
+    /// The `ClusterSecretStore` a push request resolves to, if policy allows it.
+    pub fn resolve_push_store(&self, requested: Option<&str>) -> Result<String, String> {
+        let store = requested
+            .map(str::to_string)
+            .or_else(|| self.default_push_store.clone())
+            .ok_or("pushSecret has no clusterSecretStore and the controller has no default")?;
+        if self.allowed_push_stores.iter().any(|s| s == &store) {
+            Ok(store)
+        } else {
+            Err(format!(
+                "ClusterSecretStore {store} is not in the allowed push stores"
+            ))
+        }
+    }
+
+    /// Remote key for a client. Fixed by the controller so a team cannot
+    /// write into another team's path.
+    pub fn push_remote_key(&self, namespace: &str, name: &str) -> String {
+        format!("{}{namespace}/{name}", self.push_path_prefix)
     }
 
     pub fn check_lifetime(&self, d: Duration) -> Result<(), String> {
@@ -230,7 +271,29 @@ mod tests {
             allow_localhost: false,
             max_secret_lifetime: Duration::days(180),
             require_approval: true,
+            allowed_push_stores: vec!["openbao".into()],
+            default_push_store: Some("openbao".into()),
+            push_path_prefix: "charter/".into(),
+            push_refresh_interval: "1m".into(),
         }
+    }
+
+    #[test]
+    fn push_stores() {
+        let mut p = policy();
+        assert_eq!(p.resolve_push_store(None).unwrap(), "openbao");
+        assert_eq!(p.resolve_push_store(Some("openbao")).unwrap(), "openbao");
+        assert!(p.resolve_push_store(Some("team-store")).is_err());
+        p.default_push_store = None;
+        assert!(p.resolve_push_store(None).is_err());
+        // Fail closed: no allow-list means no pushing at all.
+        p.allowed_push_stores.clear();
+        p.default_push_store = Some("openbao".into());
+        assert!(p.resolve_push_store(None).is_err());
+        assert_eq!(
+            p.push_remote_key("team-a", "portal"),
+            "charter/team-a/portal"
+        );
     }
 
     #[test]
@@ -305,6 +368,18 @@ mod tests {
         assert_ne!(
             admin_hash(&y("https://a/cb", "G1")),
             admin_hash(&y("https://a/cb", "G2"))
+        );
+        // pushSecret is admin-only, and adding the field to the CRD must not
+        // change the hash of clients that do not use it (no forced re-approval).
+        let base = "displayName: X\nowners: [o1]\n";
+        let without: IAMClientSpec = serde_norway::from_str(base).unwrap();
+        let with: IAMClientSpec =
+            serde_norway::from_str(&format!("{base}pushSecret: {{}}\n")).unwrap();
+        assert_ne!(admin_hash(&without), admin_hash(&with));
+        assert!(
+            !serde_json::to_string(&without)
+                .unwrap()
+                .contains("pushSecret")
         );
         assert_eq!(classify(None, "h"), ChangeKind::Create);
         assert_eq!(classify(Some("h"), "h"), ChangeKind::OwnerChange);
