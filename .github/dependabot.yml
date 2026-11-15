@@ -1,0 +1,55 @@
+# Copyright (c) 2026 Erick Bourgeois, charter
+# SPDX-License-Identifier: Apache-2.0
+#
+# Dependency update automation (Scorecard Dependency-Update-Tool). Weekly, and
+# every ecosystem carries a 7-day cooldown: Dependabot waits after a version is
+# published before proposing it, the standard defence against a compromised
+# release being auto-merged within hours of publication.
+
+version: 2
+updates:
+  # GitHub Actions: keeps the SHA-pinned actions current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Rust crates. One PR for everything: cargo treats a 0.x -> 0.y bump as
+  # major, so a minor/patch-only group would leave most pre-1.0 crates as
+  # individual PRs.
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  # Container base images (Dockerfile FROM lines).
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      docker:
+        patterns: ["*"]
+
+  # Documentation toolchain (docs/pyproject.toml, docs/poetry.lock).
+  - package-ecosystem: "pip"
+    directory: "/docs"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      docs:
+        patterns: ["*"]

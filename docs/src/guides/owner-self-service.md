@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Owners: editing redirect URIs
 
 The owning team maintains its client's redirect URIs itself, through the

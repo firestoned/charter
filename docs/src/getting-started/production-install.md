@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Production install
 
 This installs the controller in-cluster with workload identity, the admission
@@ -12,9 +15,9 @@ ResourceSet that admins provision through.
 - The cluster runs the
   [Azure Workload Identity](https://azure.github.io/azure-workload-identity/)
   webhook (built into AKS with `--enable-workload-identity`).
-- Kubernetes supports `ValidatingAdmissionPolicy` (GA) and
-  `MutatingAdmissionPolicy` (beta in recent releases; check it is enabled), or
-  you replicate them with Kyverno.
+- Kubernetes 1.36 or later, where both `ValidatingAdmissionPolicy` and
+  `MutatingAdmissionPolicy` are GA (`admissionregistration.k8s.io/v1`). On older
+  clusters replicate the mutating policy with Kyverno.
 - Flux with the Flux Operator (`ResourceSet`, `ResourceSetInputProvider`), if
   admins provision through Git.
 - Optionally External Secrets Operator and OpenBao for

@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Charter
 
 *A charter is a grant of rights from an authority: platform admins grant an
@@ -105,7 +108,7 @@ Full documentation: <https://firestoned.github.io/charter/> (sources in
 ## Run
 
 ```sh
-cargo run -- crd > deploy/crd.yaml        # regenerate the CRD
+make crd                                  # regenerate the CRD
 kubectl apply -f deploy/crd.yaml -f deploy/rbac.yaml -f deploy/deployment.yaml
 
 kubectl apply -f deploy/admission-policy.yaml -f deploy/flux/resourceset.yaml

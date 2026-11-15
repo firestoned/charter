@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Erick Bourgeois, charter
+# SPDX-License-Identifier: Apache-2.0
+
 # cargo-deny: fails CI on known vulnerabilities, unapproved licences,
 # yanked crates or crates from unknown sources.
 [advisories]

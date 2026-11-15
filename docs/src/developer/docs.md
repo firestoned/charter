@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Writing these docs
 
 The site is MkDocs with the Material theme. Sources are in `docs/src`, the
@@ -31,6 +34,7 @@ docker run --rm -v "$PWD":/src -w /src/docs python:3.13 sh -c \
 
 ## Conventions
 
+- Every page starts with the SPDX header as an HTML comment (`make license-check`).
 - Diagrams in Mermaid fences.
 - No real infrastructure: no real tenant IDs, client IDs, hostnames or IP
   addresses; use `example.com` and obviously fake GUIDs.

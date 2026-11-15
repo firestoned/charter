@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Erick Bourgeois, charter
+# SPDX-License-Identifier: Apache-2.0
+
 # Who may do what to an IAMClient, enforced by the API server:
 #   - create and delete: platform admins, or the Flux provisioner identity
 #   - change admin-only fields or approval annotations: same
@@ -84,10 +87,11 @@ spec:
 ---
 # Stamp the real author of every create/update so the controller's audit
 # records say who changed what. Any value a user writes is overwritten.
-# MutatingAdmissionPolicy is beta (admissionregistration.k8s.io/v1beta1) on
-# recent Kubernetes; confirm it is enabled on the target AKS version, or use
-# the equivalent Kyverno mutate rule.
-apiVersion: admissionregistration.k8s.io/v1beta1
+# MutatingAdmissionPolicy is GA (admissionregistration.k8s.io/v1) from
+# Kubernetes 1.36, which serves no other version; earlier releases served it
+# as v1beta1 behind a feature gate. On older clusters use the equivalent
+# Kyverno mutate rule.
+apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingAdmissionPolicy
 metadata:
   name: iamclient-stamp-author
@@ -113,7 +117,7 @@ spec:
             }
           }
 ---
-apiVersion: admissionregistration.k8s.io/v1beta1
+apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingAdmissionPolicyBinding
 metadata:
   name: iamclient-stamp-author

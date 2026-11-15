@@ -1,0 +1,60 @@
+# Copyright (c) 2026 Erick Bourgeois, charter
+# SPDX-License-Identifier: Apache-2.0
+#
+# End-to-end checks in kind that need no cloud credentials (`make kind-e2e-ci`):
+# the CRD, the admission policies enforcing "admins create, owners maintain"
+# against a real API server (provisioner, admin, owner and outsider identities,
+# by impersonation), and the controller image starting with the shipped RBAC
+# and Deployment and failing closed without workload identity.
+#
+# Not here: the live Entra scenarios (docs/src/developer/e2e.md). They need a
+# tenant credential, which is deliberately not stored in GitHub; they run by hand
+# against a development tenant.
+
+name: E2E
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  # Reusable: callable from a release pipeline or dependabot-auto-merge.
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  kind:
+    name: 🧪 CRD, admission and image in kind
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # musl: the image is the shipped Dockerfile's runtime stage over the
+      # host-built static binary (`make dist`), so the cargo cache does the work.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving ref: re-pin quarterly)
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Cache cargo dependencies
+        uses: firestoned/github-actions/rust/cache-cargo@f52366c4f57f0110012035ac1bcd0bee4075b3e9 # v1.4.0
+
+      # Docker and kubectl ship on ubuntu-latest; `make kind-install` fetches the
+      # pinned kind CLI (checksum verified). The target tears the cluster down
+      # after, and dumps clients, pods, events and controller logs on failure.
+      - name: kind e2e
+        run: make kind-e2e-ci

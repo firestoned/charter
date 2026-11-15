@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Bootstrap the Entra identity
 
 The controller acts in Entra as its own app registration. Create it once per

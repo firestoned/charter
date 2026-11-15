@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Compliance design and control mapping
 
 Status: design intent for review with Enterprise IAM, Technology Risk and
@@ -115,9 +118,10 @@ Actions recorded: `policy_check`, `approval_check`, `create_application`,
 - **Approval intake.** Today an admin creates the ResourceSetInputProvider by
   hand. Connect it to the change system (e.g. an ExternalService input
   provider backed by the approval API) so approvals are not retyped.
-- **Admission policies in a real cluster.** The CEL in `deploy/admission-policy.yaml`
-  has not been run against an API server yet, and MutatingAdmissionPolicy is
-  beta; confirm availability on the target AKS version.
+- **Admission policies on the target platform.** Both policies are tested
+  against a Kubernetes 1.36 API server in kind on every PR. Still open:
+  confirming the target AKS version serves `MutatingAdmissionPolicy` at `v1`
+  (or replacing it with Kyverno there).
 - **Flux field ownership.** Confirm that the ResourceSet does not revert
   owner-set `redirectURIs` (it should not, since it never sets that field).
 - **Entra log reconciliation.** A scheduled job comparing Entra directory audit

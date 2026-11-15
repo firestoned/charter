@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Dex in front of Entra
 
 A team can put [Dex](https://dexidp.io/) between its application and Entra.

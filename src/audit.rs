@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Erick Bourgeois, charter
+// SPDX-License-Identifier: Apache-2.0
+
 //! Audit trail.
 //!
 //! Every Entra mutation is bracketed by two records: `attempted` before the
