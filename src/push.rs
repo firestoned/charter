@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Erick Bourgeois, charter
+// SPDX-License-Identifier: Apache-2.0
+
 //! External Secrets Operator `PushSecret`: copies the delivered Kubernetes
 //! Secret to OpenBao (or any `ClusterSecretStore` on the allow-list).
 //!

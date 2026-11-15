@@ -2,3 +2,7 @@ target/
 __pycache__/
 docs/site/
 docs/.venv/
+.kind/
+dist/
+release/
+*.cdx.json

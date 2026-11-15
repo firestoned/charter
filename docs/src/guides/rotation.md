@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Rotating secrets
 
 Rotation is automatic. This page covers what to expect, how to change the

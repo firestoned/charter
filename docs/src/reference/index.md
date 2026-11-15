@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Reference
 
 - [IAMClient API](iamclient.md): every field, generated from the CRD.

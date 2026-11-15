@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Provisioning a client
 
 Admins approve a client once. In production this goes through Flux, so the

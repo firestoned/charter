@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Security and compliance
 
 Charter manages identities for a regulated environment, so its own security
@@ -35,7 +38,7 @@ model is part of the product.
 | Configuration integrity | Drift detection and reversion |
 | Audit | JSON records before and after every mutation, hash-chained, shipped to immutable storage |
 | Transport | Graph and token endpoints over HTTPS only (`https_only` client), 30-second timeouts |
-| Supply chain | `cargo-deny` (advisories, licences, sources), CycloneDX SBOM, keyless cosign signature, SLSA provenance, distroless non-root image |
+| Supply chain | Signed commits verified in CI; `cargo-deny` and `cargo-audit`; CodeQL, Semgrep and OpenSSF Scorecard; SHA-pinned actions; CycloneDX SBOMs of crate and image; keyless Cosign signature and build-provenance attestations for the image and every release asset; static binary on a distroless non-root image |
 | Runtime | Non-root, read-only root filesystem, all capabilities dropped, `RuntimeDefault` seccomp |
 
 ## Pages

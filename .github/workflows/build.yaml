@@ -1,0 +1,387 @@
+# Copyright (c) 2026 Erick Bourgeois, charter
+# SPDX-License-Identifier: Apache-2.0
+#
+# Build gate: licence headers, signed commits, fmt, clippy, tests, CRD in sync,
+# cargo-audit, cargo-deny, the static musl binary with a CycloneDX SBOM, and the
+# controller image (SBOM'd, Cosign-signed and provenance-attested on push and
+# release). A release also gets its assets: the binary, an install bundle with
+# the image pinned by digest, the admission and Flux manifests, SBOMs and
+# checksums, each attested.
+#
+# Adapted from mediatore's build.yaml. All logic lives in Makefile targets; jobs
+# only install tools and call make.
+#
+# No `paths:` filter: a required check that never triggers blocks the PR forever.
+
+name: Build
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  release:
+    types:
+      - published
+  # Reusable: a release pipeline can call the whole gate.
+  workflow_call:
+
+# Top-level GITHUB_TOKEN is read-only (OpenSSF Scorecard Token-Permissions).
+# Jobs that push images, sign or attest declare elevated scopes themselves.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # Licence headers and commit signatures.
+  # ───────────────────────────────────────────────────────────────────────────
+  license-check:
+    name: ⚖️ Verify SPDX License Headers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check license headers (Rust, shell, Makefile, workflows)
+        uses: firestoned/github-actions/security/license-check@f52366c4f57f0110012035ac1bcd0bee4075b3e9 # v1.4.0
+        with:
+          copyright-holder: "Erick Bourgeois, charter"
+          license-id: "Apache-2.0"
+
+      - name: Check license headers (manifests, docs, config)
+        run: make license-check
+
+  verify-commits:
+    name: 🔐 Verify Signed Commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Verify commits (PR)
+        if: github.event_name == 'pull_request'
+        uses: firestoned/github-actions/security/verify-signed-commits@f52366c4f57f0110012035ac1bcd0bee4075b3e9 # v1.4.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          base-ref: origin/${{ github.base_ref }}
+          verify-mode: pr
+
+      - name: Verify commits (push to main)
+        if: github.event_name == 'push'
+        uses: firestoned/github-actions/security/verify-signed-commits@f52366c4f57f0110012035ac1bcd0bee4075b3e9 # v1.4.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          verify-mode: push
+
+      - name: Verify commits (release)
+        if: github.event_name == 'release'
+        uses: firestoned/github-actions/security/verify-signed-commits@f52366c4f57f0110012035ac1bcd0bee4075b3e9 # v1.4.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          verify-mode: release
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Formatting, clippy, tests.
+  # ───────────────────────────────────────────────────────────────────────────
+  format:
+    name: 🎨 Check Formatting
+    runs-on: ubuntu-latest
+    needs: [license-check, verify-commits]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving ref: re-pin quarterly)
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: make fmt-check
+
+  clippy:
+    name: 📎 Clippy
+    runs-on: ubuntu-latest
+    needs: [format]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving ref: re-pin quarterly)
+        with:
+          components: clippy
+
+      - name: Cache cargo dependencies
+        uses: firestoned/github-actions/rust/cache-cargo@f52366c4f57f0110012035ac1bcd0bee4075b3e9 # v1.4.0
+
+      - name: Run clippy
+        run: make lint
+
+  test:
+    name: 🧪 Test
+    runs-on: ubuntu-latest
+    needs: [license-check, verify-commits]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving ref: re-pin quarterly)
+
+      - name: Cache cargo dependencies
+        uses: firestoned/github-actions/rust/cache-cargo@f52366c4f57f0110012035ac1bcd0bee4075b3e9 # v1.4.0
+
+      - name: Run tests
+        run: make test
+
+      - name: CRD in sync with src/crd.rs
+        run: make crd-check
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Dependency scans: cargo-audit and cargo-deny.
+  # ───────────────────────────────────────────────────────────────────────────
+  security:
+    name: 🛡️ Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: [verify-commits]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving ref: re-pin quarterly)
+
+      - name: Run security scan
+        uses: firestoned/github-actions/rust/security-scan@f52366c4f57f0110012035ac1bcd0bee4075b3e9 # v1.4.0
+        with:
+          cargo-audit-version: "0.22.0"
+
+  cargo-deny:
+    name: 🧪 cargo-deny (License + Advisory + Sources)
+    runs-on: ubuntu-latest
+    needs: [verify-commits]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          log-level: warn
+          command: check
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # The static musl binary: a release asset, and what the kind tests build the
+  # image over.
+  # ───────────────────────────────────────────────────────────────────────────
+  dist:
+    name: 🦀 Static Binary (musl)
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The binary reports the release's version; fails if Cargo.toml then disagrees.
+      - name: Set the crate version (release)
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: make set-version VERSION="${TAG#v}"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (moving ref: re-pin quarterly)
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Cache cargo dependencies
+        uses: firestoned/github-actions/rust/cache-cargo@f52366c4f57f0110012035ac1bcd0bee4075b3e9 # v1.4.0
+
+      - name: Build the binary
+        run: make dist
+
+      - name: Release assets, dry run (the release-only logic, proven on every event)
+        run: make release-assets-test
+
+      - name: Release version stamp works (the release-only step, proven on every event)
+        run: make set-version-test
+
+      - name: Generate CycloneDX SBOM
+        run: make sbom
+
+      - name: Stage the SBOM next to the binary
+        run: mv ./*.cdx.json dist/
+
+      - name: Upload the binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: charter-iam-linux-amd64-musl
+          path: |
+            dist/charter-iam
+            dist/*.cdx.json
+          if-no-files-found: error
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Controller image: builds on every event, pushes + signs + SBOMs on non-PR.
+  # ───────────────────────────────────────────────────────────────────────────
+  docker:
+    name: 🐳 Controller Image
+    runs-on: ubuntu-latest
+    needs: [test, clippy]
+    permissions:
+      contents: read
+      packages: write # GHCR push (non-PR only)
+      id-token: write # keyless Cosign
+    outputs:
+      digest: ${{ steps.docker_build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The binary reports the release's version; fails if Cargo.toml then disagrees.
+      - name: Set the crate version (release)
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: make set-version VERSION="${TAG#v}"
+
+      - name: Set up Docker (login + buildx)
+        uses: firestoned/github-actions/docker/setup-docker@f52366c4f57f0110012035ac1bcd0bee4075b3e9 # v1.4.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: |
+            latest=false
+          tags: |
+            type=ref,event=pr
+            # A release of a commit builds a different image (the version stamped
+            # in) than the merge build of that commit, so a release's image
+            # carries the version alone, never the sha- tag the merge build owns.
+            type=sha,prefix=sha-,enable=${{ github.event_name != 'release' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
+            type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
+
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          sbom: true
+          provenance: true
+
+      - name: Install Cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Cosign sign (keyless, by digest)
+        if: github.event_name != 'pull_request'
+        run: cosign sign --yes "ghcr.io/${{ github.repository }}@${{ steps.docker_build.outputs.digest }}"
+
+      - name: Generate image SBOM
+        if: github.event_name != 'pull_request'
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ghcr.io/${{ github.repository }}@${{ steps.docker_build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: docker-sbom.json
+          upload-release-assets: false
+
+      - name: Upload image SBOM artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: docker-sbom
+          path: docker-sbom.json
+          if-no-files-found: error
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # GitHub build-provenance attestation for the pushed image.
+  # ───────────────────────────────────────────────────────────────────────────
+  attest:
+    name: 🔏 Attest Image
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    needs: [docker]
+    permissions:
+      id-token: write
+      attestations: write
+      packages: write
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest build provenance (controller image)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ needs.docker.outputs.digest }}
+          push-to-registry: true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Release assets, gathered by `make release-assets` and attested file by file
+  # (`gh attestation verify <file> --repo firestoned/charter`).
+  # ───────────────────────────────────────────────────────────────────────────
+  release-assets:
+    name: 🚀 Release Assets
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    needs: [dist, docker, attest]
+    permissions:
+      contents: write # upload the assets to the release
+      id-token: write # keyless attestation of the files
+      attestations: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the binary and the SBOMs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: ./artifacts
+
+      - name: Stage them where make release-assets looks
+        run: mkdir -p dist && cp artifacts/charter-iam-linux-amd64-musl/* artifacts/docker-sbom/* dist/ && chmod +x dist/charter-iam
+
+      - name: Gather the assets
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          IMAGE_DIGEST: ${{ needs.docker.outputs.digest }}
+        run: make release-assets VERSION="${TAG#v}" IMAGE_DIGEST="$IMAGE_DIGEST" RELEASE_DIR=release
+
+      - name: Attest build provenance (every asset)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release/*
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          files: release/*

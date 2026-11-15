@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Getting started
 
 Charter needs three things: a Kubernetes cluster, an Entra tenant, and an

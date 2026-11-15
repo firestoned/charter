@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Erick Bourgeois, charter
+# SPDX-License-Identifier: Apache-2.0
+
 # What Flux renders from the ResourceSet (see flux/resourceset.yaml), after
 # the owning team has added redirect URIs with `kubectl edit`.
 apiVersion: iam.rbc.example/v1alpha1

@@ -1,8 +1,43 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # End-to-end testing
 
+There are two tiers:
+
+| Tier | Needs | Runs |
+|---|---|---|
+| kind (`make kind-e2e`) | Docker or Podman, kubectl | In CI on every PR, and locally |
+| Live Entra | A non-production tenant | By hand |
+
+## kind tier
+
+`make kind-e2e` creates a kind cluster (pinned kind release, node image pinned
+by digest), builds the image over the static binary, loads it, and runs
+`scripts/kind-e2e.sh`:
+
+1. The CRD installs and the example `IAMClient` validates server-side.
+2. The admission policies, applied as shipped, enforce "admins create, owners
+   maintain" against a real API server. The script impersonates the Flux
+   provisioner, a platform admin, an owner (with the per-client Role) and a
+   non-admin with create rights, and checks: who may create and delete; that
+   owners can change `redirectURIs` and nothing else; that approval
+   annotations are admin-only; that `last-modified-by` is stamped and cannot be
+   forged; and that HTTP, wildcard, foreign-domain and suffix-trick redirect
+   URIs are refused.
+3. The controller image starts with the shipped RBAC and Deployment, as
+   non-root, and fails closed ("workload identity required") without a
+   federated token.
+
+`make kind-e2e-ci` does the same on a fresh cluster and deletes it afterwards.
+With Podman instead of Docker, set `KIND_EXPERIMENTAL_PROVIDER=podman`.
+
+## Live Entra tier
+
 Charter's Graph behaviour (eventual consistency, throttling, permission edge
-cases) only shows up against a real tenant, so the end-to-end tests run the
-controller against a **non-production** Entra tenant and a local cluster.
+cases) only shows up against a real tenant, so these tests run the controller
+against a **non-production** Entra tenant and a local cluster. They are not in
+CI: that would put a tenant credential in GitHub.
 
 ## Setup
 

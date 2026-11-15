@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Microsoft Graph usage
 
 Charter calls Microsoft Graph v1.0 (`https://graph.microsoft.com/v1.0`) with

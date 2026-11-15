@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Quickstart: local cluster and dev tenant
 
 Run the controller from source against a kind cluster and a non-production

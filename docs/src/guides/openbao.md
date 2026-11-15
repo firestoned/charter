@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Delivering to OpenBao
 
 Charter always writes the client's credentials to a Kubernetes Secret. With

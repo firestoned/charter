@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Developer guide
 
 - [Code layout](code-layout.md): the modules and how a reconcile flows through them.
@@ -19,4 +22,4 @@
   `skip_serializing_if = "Option::is_none"` so existing clients' admin hash
   does not change, and add them to the admission policy's compared fields.
 - **The CRD is generated.** Change `src/crd.rs`, then regenerate
-  `deploy/crd.yaml`; CI fails if they differ.
+  `deploy/crd.yaml` with `make crd`; CI fails if they differ.

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Erick Bourgeois, charter
+// SPDX-License-Identifier: Apache-2.0
+
 //! Platform policy (set by Enterprise IAM via controller config) and the
 //! approval gate checked before any Entra mutation.
 

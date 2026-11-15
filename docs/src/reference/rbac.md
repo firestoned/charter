@@ -1,3 +1,6 @@
+<!-- Copyright (c) 2026 Erick Bourgeois, charter -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # RBAC and admission
 
 ## Who may do what
@@ -75,8 +78,12 @@ On every create and update (except by the controller), sets
 `iam.rbc.example/last-modified-by` to the authenticated username, overwriting
 any value supplied. The controller copies it into every audit record.
 
-`MutatingAdmissionPolicy` is `v1beta1`; confirm it is enabled on your
-Kubernetes version, or replace it with an equivalent Kyverno mutate rule.
+`MutatingAdmissionPolicy` is GA (`admissionregistration.k8s.io/v1`) from
+Kubernetes 1.36, which serves no other version. On older clusters replace it
+with an equivalent Kyverno mutate rule.
+
+Both policies are exercised against a real API server on every PR by the
+[kind tests](../developer/e2e.md#kind-tier).
 
 ```yaml
 --8<-- "deploy/admission-policy.yaml"

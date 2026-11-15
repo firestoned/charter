@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Erick Bourgeois, charter
+# SPDX-License-Identifier: Apache-2.0
+
 # Admin provisioning path. Platform admins approve a request by creating a
 # ResourceSetInputProvider (one per client) in charter-system, which only they
 # can write. Flux renders the IAMClient plus a per-client Role that lets the
